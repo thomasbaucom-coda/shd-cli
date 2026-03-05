@@ -1,0 +1,36 @@
+{
+  "name": "shd-cli",
+  "version": "0.1.0",
+  "description": "Coda CLI — agent-first command-line interface for Coda docs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomasbaucom-coda/shd-cli.git"
+  },
+  "private": true,
+  "bin": {
+    "coda": "bin/coda"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "coda",
+    "cli",
+    "ai-agent",
+    "automation",
+    "docs"
+  ]
+}

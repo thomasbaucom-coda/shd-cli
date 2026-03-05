@@ -4,6 +4,70 @@ use crate::output::{self, OutputFormat};
 use crate::validate;
 use serde_json::{json, Value};
 
+/// Discover available tools from the server via tool_guide.
+pub async fn list_tools(
+    client: &CodaClient,
+    doc_id: &str,
+    topic: Option<&str>,
+) -> Result<()> {
+    validate::validate_resource_id(doc_id, "docId")?;
+
+    let topic = topic.unwrap_or("getting_started");
+    let mut payload = json!({ "topic": topic });
+    // tool_guide doesn't need docId in payload but the endpoint routes by it
+    payload["docId"] = json!(doc_id);
+
+    let result = client.call_tool(doc_id, "tool_guide", payload).await?;
+    output::print_response(&result, OutputFormat::Json)?;
+    Ok(())
+}
+
+/// Dynamic dispatch: parse args as <tool_name> <doc_id> [--json <payload>]
+/// and call the tool endpoint directly.
+pub async fn dynamic_dispatch(
+    client: &CodaClient,
+    args: &[String],
+    dry_run: bool,
+) -> Result<()> {
+    if args.is_empty() {
+        return Err(CodaError::Validation(
+            "Dynamic tool call requires: <tool_name> <doc_id> --json '{...}'".into(),
+        ));
+    }
+
+    let tool_name = &args[0];
+
+    // Find doc_id (first non-flag arg after tool_name)
+    let doc_id = args.iter().skip(1)
+        .find(|a| !a.starts_with('-'))
+        .ok_or_else(|| CodaError::Validation(
+            format!("Missing doc_id. Usage: coda tool {tool_name} <doc_id> --json '{{...}}'")
+        ))?;
+    validate::validate_resource_id(doc_id, "docId")?;
+
+    // Find --json value
+    let json_payload = args.windows(2)
+        .find(|w| w[0] == "--json")
+        .map(|w| w[1].as_str())
+        .ok_or_else(|| CodaError::Validation(
+            format!("Missing --json flag. Usage: coda tool {tool_name} {doc_id} --json '{{...}}'")
+        ))?;
+
+    let payload = validate::resolve_json_payload(json_payload)?;
+
+    if dry_run {
+        output::print_response(
+            &client.dry_run_tool(doc_id, tool_name, &payload),
+            OutputFormat::Json,
+        )?;
+        return Ok(());
+    }
+
+    let result = client.call_tool(doc_id, tool_name, payload).await?;
+    output::print_response(&result, OutputFormat::Json)?;
+    Ok(())
+}
+
 /// Create a table with typed columns on a page.
 pub async fn table_create(
     client: &CodaClient,
