@@ -9,18 +9,34 @@ mod validate;
 use clap::{Parser, Subcommand};
 use output::OutputFormat;
 
+const BANNER: &str = r#"
+  ____  _   _ ____  _____ ____  _   _ _   _ __  __    _    _   _
+ / ___|| | | |  _ \| ____|  _ \| | | | | | |  \/  |  / \  | \ | |
+ \___ \| | | | |_) |  _| | |_) | |_| | | | | |\/| | / _ \ |  \| |
+  ___) | |_| |  __/| |___|  _ <|  _  | |_| | |  | |/ ___ \| |\  |
+ |____/ \___/|_|   |_____|_| \_\_| |_|\___/|_|  |_/_/   \_\_| \_|
+  ____   ___   ____ ____
+ |  _ \ / _ \ / ___/ ___|
+ | | | | | | | |   \___ \
+ | |_| | |_| | |___ ___) |
+ |____/ \___/ \____|____/
+"#;
+
 #[derive(Parser)]
 #[command(
     name = "coda",
     version,
-    about = "Coda CLI — agent-first command-line interface for Coda docs",
-    long_about = "Coda CLI provides programmatic access to Coda docs, pages, tables, rows, and more.\n\n\
+    about = "Superhuman Docs CLI — agent-first command-line interface for Coda",
+    before_help = BANNER,
+    long_about = "Superhuman Docs CLI provides programmatic access to Coda docs, pages, tables, rows, and more.\n\n\
                   Designed for AI agents: structured JSON output, --dry-run safety, schema introspection,\n\
-                  and input validation against hallucinated parameters.\n\n\
+                  dynamic command registration, and input validation against hallucinated parameters.\n\n\
                   Auth: set CODA_API_TOKEN or run `coda auth login`.",
     after_help = "EXAMPLES:\n  \
                   coda docs list --output json\n  \
                   coda rows list <docId> <tableId> --fields \"Name,Status\" --limit 10\n  \
+                  coda tool table-create <docId> <canvasId> --name \"Tasks\" --columns '[...]'\n  \
+                  coda tool search <docId> --json '{\"query\": \"meetings\"}'\n  \
                   coda schema rows.list\n  \
                   coda docs create --json '{\"title\": \"My Doc\"}' --dry-run"
 )]
@@ -162,6 +178,7 @@ enum DocsAction {
     /// Get a doc by ID
     Get {
         /// Document ID
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
     },
     /// Create a new doc
@@ -176,6 +193,7 @@ enum DocsAction {
     /// Delete a doc
     Delete {
         /// Document ID
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
     },
 }
@@ -186,17 +204,20 @@ enum DocsAction {
 enum PagesAction {
     /// List pages in a doc
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         #[arg(long)]
         limit: Option<u32>,
     },
     /// Get a page by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         page_id: String,
     },
     /// Create a new page
     Create {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         #[arg(long)]
         name: Option<String>,
@@ -205,6 +226,7 @@ enum PagesAction {
     },
     /// Update a page
     Update {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         page_id: String,
         /// Full API request body as JSON
@@ -213,11 +235,13 @@ enum PagesAction {
     },
     /// Delete a page
     Delete {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         page_id: String,
     },
     /// Get page content (child objects)
     Content {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         page_id: String,
     },
@@ -229,12 +253,14 @@ enum PagesAction {
 enum TablesAction {
     /// List tables in a doc
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         #[arg(long)]
         limit: Option<u32>,
     },
     /// Get a table by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
     },
@@ -246,6 +272,7 @@ enum TablesAction {
 enum ColumnsAction {
     /// List columns in a table
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         #[arg(long)]
@@ -253,6 +280,7 @@ enum ColumnsAction {
     },
     /// Get a column by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         column_id: String,
@@ -265,6 +293,7 @@ enum ColumnsAction {
 enum RowsAction {
     /// List rows in a table
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         #[arg(long)]
@@ -284,12 +313,14 @@ enum RowsAction {
     },
     /// Get a single row by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         row_id: String,
     },
     /// Insert or upsert rows
     Upsert {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// Full API request body as JSON
@@ -298,6 +329,7 @@ enum RowsAction {
     },
     /// Update a single row
     Update {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         row_id: String,
@@ -307,12 +339,14 @@ enum RowsAction {
     },
     /// Delete a single row
     Delete {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         row_id: String,
     },
     /// Delete multiple rows
     DeleteRows {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// JSON body with rowIds to delete
@@ -321,6 +355,7 @@ enum RowsAction {
     },
     /// Push a button column on a row
     PushButton {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         row_id: String,
@@ -328,6 +363,7 @@ enum RowsAction {
     },
     /// Import rows from stdin (NDJSON or JSON array), auto-batched
     Import {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// Comma-separated key columns for upsert matching
@@ -345,12 +381,14 @@ enum RowsAction {
 enum FormulasAction {
     /// List formulas in a doc
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         #[arg(long)]
         limit: Option<u32>,
     },
     /// Get a formula by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         formula_id: String,
     },
@@ -362,12 +400,14 @@ enum FormulasAction {
 enum ControlsAction {
     /// List controls in a doc
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         #[arg(long)]
         limit: Option<u32>,
     },
     /// Get a control by ID
     Get {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         control_id: String,
     },
@@ -379,14 +419,17 @@ enum ControlsAction {
 enum PermissionsAction {
     /// List permissions on a doc
     List {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
     },
     /// Get sharing metadata for a doc
     Metadata {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
     },
     /// Add a permission to a doc
     Add {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// Full API request body as JSON
         #[arg(long)]
@@ -394,6 +437,7 @@ enum PermissionsAction {
     },
     /// Remove a permission
     Remove {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         permission_id: String,
     },
@@ -434,6 +478,7 @@ enum ToolAction {
     /// Discover available tools from the server (requires MCP-scoped token)
     List {
         /// Document ID (needed to reach the tool endpoint)
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// Filter by topic: getting_started, table, content, comment, formula, page, document, navigation
         #[arg(long)]
@@ -441,6 +486,7 @@ enum ToolAction {
     },
     /// Create a table with typed columns on a page
     TableCreate {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// Canvas/page ID where the table will be placed
         canvas_id: String,
@@ -456,6 +502,7 @@ enum ToolAction {
     },
     /// Add rows to an existing table (bulk)
     TableAddRows {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// Column IDs as JSON array: ["c-abc","c-def"]
@@ -467,6 +514,7 @@ enum ToolAction {
     },
     /// Add columns to an existing table
     TableAddColumns {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// Columns as JSON array
@@ -475,6 +523,7 @@ enum ToolAction {
     },
     /// Delete rows from a table
     TableDeleteRows {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// JSON payload with row IDs or filter
@@ -483,6 +532,7 @@ enum ToolAction {
     },
     /// Update rows in a table
     TableUpdateRows {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// JSON payload with row updates
@@ -491,6 +541,7 @@ enum ToolAction {
     },
     /// Import rows from stdin via internal API, auto-batched
     ImportRows {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// Column IDs as JSON array: ["c-abc","c-def"]
@@ -502,6 +553,7 @@ enum ToolAction {
     },
     /// Modify page content (add text, headings, lists)
     ContentModify {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         canvas_id: String,
         /// Operations as JSON (see tool_guide "content" topic)
@@ -510,6 +562,7 @@ enum ToolAction {
     },
     /// Add, reply to, or delete comments
     CommentManage {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// JSON payload with action and comment data
         #[arg(long)]
@@ -517,6 +570,7 @@ enum ToolAction {
     },
     /// Create a named formula on a page
     FormulaCreate {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         canvas_id: String,
         /// Formula name
@@ -528,6 +582,7 @@ enum ToolAction {
     },
     /// Execute a Coda Formula Language expression
     FormulaExecute {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// CFL expression to evaluate
         #[arg(long)]
@@ -535,6 +590,7 @@ enum ToolAction {
     },
     /// Configure a table view (rename, filter, change layout)
     ViewConfigure {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         table_id: String,
         /// View ID (use "default" for the default view)
@@ -552,6 +608,7 @@ enum ToolAction {
     },
     /// Call any internal tool by name with a raw JSON payload
     Raw {
+        #[arg(allow_hyphen_values = true)]
         doc_id: String,
         /// Tool name (e.g. table_create, content_modify, comment_manage)
         tool_name: String,
