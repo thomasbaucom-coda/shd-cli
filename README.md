@@ -2,18 +2,6 @@
 
 Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. Inspired by [Google's Workspace CLI](https://github.com/googleworkspace/cli) and [Justin Poehnelt's CLI-for-agents guidance](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/).
 
-## Why a CLI instead of an MCP?
-
-| | MCP | CLI |
-|---|---|---|
-| Bulk writes | One tool call at a time through the LLM | `python3 generate.py \| coda rows import` — zero LLM round trips |
-| Composability | Locked inside the model's tool loop | Pipes, scripts, `jq`, `curl`, cron — standard Unix |
-| Auditability | Buried in chat history | `--dry-run`, shell history, CI logs |
-| Startup | JSON-RPC handshake + session | 13ms cold start |
-| Batch import | 1 row per tool call (burns tokens) | 500 rows per API call, auto-batched from stdin |
-
-The CLI also ships an MCP server (`coda mcp`) for contexts where MCP is needed.
-
 ## Install
 
 ```bash
