@@ -425,7 +425,20 @@ enum FoldersAction {
 // --- Tool (Internal API) ---
 
 #[derive(Subcommand)]
+#[command(
+    after_help = "Any unrecognized subcommand is dispatched dynamically to the tool endpoint.\n\
+                  Example: coda tool page_duplicate <docId> --json '{...}'\n\
+                  Run `coda tool list <docId>` to discover all available tools."
+)]
 enum ToolAction {
+    /// Discover available tools from the server (requires MCP-scoped token)
+    List {
+        /// Document ID (needed to reach the tool endpoint)
+        doc_id: String,
+        /// Filter by topic: getting_started, table, content, comment, formula, page, document, navigation
+        #[arg(long)]
+        topic: Option<String>,
+    },
     /// Create a table with typed columns on a page
     TableCreate {
         doc_id: String,
@@ -546,6 +559,11 @@ enum ToolAction {
         #[arg(long)]
         json: String,
     },
+
+    /// Dynamic dispatch: any unrecognized tool name is called directly.
+    /// Usage: coda tool <tool_name> <doc_id> --json '{...}'
+    #[command(external_subcommand)]
+    Dynamic(Vec<String>),
 }
 
 #[tokio::main]
@@ -757,6 +775,9 @@ async fn run(cli: Cli) -> error::Result<()> {
         }
 
         Commands::Tool { action } => match action {
+            ToolAction::List { doc_id, topic } => {
+                commands::tools::list_tools(&client, &doc_id, topic.as_deref()).await
+            }
             ToolAction::TableCreate { doc_id, canvas_id, name, columns, rows } => {
                 commands::tools::table_create(&client, &doc_id, &canvas_id, &name, &columns, rows.as_deref(), dry_run).await
             }
@@ -793,6 +814,9 @@ async fn run(cli: Cli) -> error::Result<()> {
             }
             ToolAction::Raw { doc_id, tool_name, json } => {
                 commands::tools::raw(&client, &doc_id, &tool_name, &json, dry_run).await
+            }
+            ToolAction::Dynamic(args) => {
+                commands::tools::dynamic_dispatch(&client, &args, dry_run).await
             }
         },
 
