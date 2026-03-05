@@ -284,6 +284,154 @@ fn build_tools_list() -> Vec<Value> {
             },
             "required": ["path"]
         })),
+
+        // --- Internal tool endpoint tools (require MCP-scoped token) ---
+        // These are dispatched dynamically via client.call_tool()
+
+        tool_def("coda_tool_table_create", "Create a table with typed columns on a page (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "canvasId": { "type": "string", "description": "Canvas/page ID for table placement" },
+                "name": { "type": "string", "description": "Table name" },
+                "columns": { "type": "array", "description": "Column definitions [{name, format, isDisplayColumn}]" },
+                "rows": { "type": "array", "description": "Initial rows (values in column order)" }
+            },
+            "required": ["docId", "canvasId", "name", "columns"]
+        })),
+        tool_def("coda_tool_table_add_rows", "Add rows to a table in bulk (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" },
+                "columns": { "type": "array", "description": "Column IDs in order" },
+                "rows": { "type": "array", "description": "Rows as arrays of values in column order" }
+            },
+            "required": ["docId", "tableId", "columns", "rows"]
+        })),
+        tool_def("coda_tool_table_add_columns", "Add columns to an existing table (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" },
+                "columns": { "type": "array", "description": "Column definitions to add" }
+            },
+            "required": ["docId", "tableId", "columns"]
+        })),
+        tool_def("coda_tool_table_delete_rows", "Delete rows from a table (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" },
+                "data": { "type": "object", "description": "Delete config: {action, rowNumbersOrIds}" }
+            },
+            "required": ["docId", "tableId", "data"]
+        })),
+        tool_def("coda_tool_table_update_rows", "Update rows in a table (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" },
+                "rows": { "type": "array", "description": "Row updates [{rowNumberOrId, updateCells}]" }
+            },
+            "required": ["docId", "tableId", "rows"]
+        })),
+        tool_def("coda_tool_table_delete", "Delete a table (requires MCP token, DESTRUCTIVE)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" }
+            },
+            "required": ["docId", "tableId"]
+        })),
+        tool_def("coda_tool_content_modify", "Write page content: markdown, callouts, code blocks, images (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "canvasId": { "type": "string" },
+                "operations": { "type": "array", "description": "Content operations [{operation, blockType, content, ...}]" }
+            },
+            "required": ["docId", "canvasId", "operations"]
+        })),
+        tool_def("coda_tool_comment_manage", "Add, reply to, or delete comments (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "data": { "type": "object", "description": "Comment action: {action, content, pageId/tableId/threadId, ...}" }
+            },
+            "required": ["docId", "data"]
+        })),
+        tool_def("coda_tool_formula_create", "Create a named formula on a page (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "canvasId": { "type": "string" },
+                "name": { "type": "string" },
+                "formula": { "type": "string", "description": "CFL expression" }
+            },
+            "required": ["docId", "canvasId", "name", "formula"]
+        })),
+        tool_def("coda_tool_formula_execute", "Evaluate a Coda Formula Language expression (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "formula": { "type": "string", "description": "CFL expression to evaluate" }
+            },
+            "required": ["docId", "formula"]
+        })),
+        tool_def("coda_tool_formula_update", "Update a named formula (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "formulaId": { "type": "string" },
+                "updatedFields": { "type": "object", "description": "Fields to update: {name, formula, format}" }
+            },
+            "required": ["docId", "formulaId", "updatedFields"]
+        })),
+        tool_def("coda_tool_formula_delete", "Delete a named formula (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "formulaId": { "type": "string" }
+            },
+            "required": ["docId", "formulaId"]
+        })),
+        tool_def("coda_tool_table_view_configure", "Configure a table view: filter, layout, name (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "tableId": { "type": "string" },
+                "tableViewId": { "type": "string", "description": "View ID (use 'default' for default view)" },
+                "name": { "type": "string" },
+                "filterFormula": { "type": "string", "description": "CFL filter expression" },
+                "viewLayout": { "type": "string", "description": "grid, card, timeline, calendar" }
+            },
+            "required": ["docId", "tableId", "tableViewId"]
+        })),
+        tool_def("coda_tool_page_duplicate", "Duplicate a page with all content (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "pageId": { "type": "string" },
+                "newTitle": { "type": "string" }
+            },
+            "required": ["docId", "pageId"]
+        })),
+        tool_def("coda_tool_search", "Search across a doc for pages, tables, and rows (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" },
+                "query": { "type": "string", "description": "Search query" }
+            },
+            "required": ["docId", "query"]
+        })),
+        tool_def("coda_tool_document_read", "Read full document structure (requires MCP token)", json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string" }
+            },
+            "required": ["docId"]
+        })),
     ]
 }
 
@@ -573,6 +721,14 @@ async fn dispatch_tool(name: &str, args: &Value, client: &CodaClient) -> Result<
             // Capture schema output by redirecting to a string
             let output = capture_schema_output(path)?;
             Ok(json!({ "schema": serde_json::from_str::<Value>(&output).unwrap_or(json!(output)) }))
+        }
+
+        // Dynamic dispatch: any coda_tool_* name routes to the internal tool endpoint
+        _ if name.starts_with("coda_tool_") => {
+            let tool_name = &name["coda_tool_".len()..];
+            let doc_id = s("docId")?;
+            validate::validate_resource_id(doc_id, "docId")?;
+            Ok(client.call_tool(doc_id, tool_name, args.clone()).await?)
         }
 
         _ => Err(CodaError::Other(format!("Unknown tool: {name}"))),
