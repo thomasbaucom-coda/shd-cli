@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+
+/**
+ * Thin wrapper that finds and executes the native coda binary.
+ * Passes all arguments through unchanged.
+ */
+
+const { execFileSync } = require("child_process");
+const path = require("path");
+const os = require("os");
+const fs = require("fs");
+
+const EXT = os.platform() === "win32" ? ".exe" : "";
+const NATIVE = path.join(__dirname, `coda-native${EXT}`);
+
+if (!fs.existsSync(NATIVE)) {
+  console.error(
+    `[shd-cli] Native binary not found at ${NATIVE}\n` +
+    `Run "npm run postinstall" or "cargo build --release" first.`
+  );
+  process.exit(1);
+}
+
+try {
+  execFileSync(NATIVE, process.argv.slice(2), { stdio: "inherit" });
+} catch (err) {
+  if (err.status !== undefined) {
+    process.exit(err.status);
+  }
+  console.error(`[shd-cli] Failed to execute: ${err.message}`);
+  process.exit(1);
+}
