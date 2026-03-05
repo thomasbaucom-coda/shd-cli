@@ -17,11 +17,17 @@ The CLI also ships an MCP server (`coda mcp`) for contexts where MCP is needed.
 ## Install
 
 ```bash
-# From source
-cargo install --path .
+# Option 1: npm (builds from source automatically)
+cd shd-cli
+npm install
+# Binary available at npm/bin/coda
 
-# Binary is at target/release/coda
+# Option 2: Cargo directly
 cargo build --release
+# Binary at target/release/coda
+
+# Option 3: Cargo install (adds to PATH)
+cargo install --path .
 ```
 
 ## Authentication
