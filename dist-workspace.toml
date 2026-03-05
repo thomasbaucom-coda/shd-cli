@@ -6,7 +6,6 @@ cargo-dist-version = "0.31.0"
 ci = "github"
 installers = ["shell", "powershell", "npm"]
 publish-jobs = ["npm"]
-npm-scope = "@anthropic"
 npm-package = "shd"
 github-attestations = true
 targets = [
