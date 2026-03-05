@@ -1,0 +1,37 @@
+[package]
+name = "coda-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Coda CLI — agent-first command-line interface for Coda docs"
+license = "MIT"
+repository = "https://github.com/coda/cli"
+homepage = "https://coda.io"
+readme = "README.md"
+authors = ["Coda"]
+keywords = ["cli", "coda", "docs", "ai-agent", "automation"]
+categories = ["command-line-utilities", "web-programming"]
+
+[[bin]]
+name = "coda"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "string", "env"] }
+dirs = "5"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+keyring = "3"
+percent-encoding = "2"
+chrono = "0.4"
+comfy-table = "7"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+[dev-dependencies]
+tempfile = "3"
