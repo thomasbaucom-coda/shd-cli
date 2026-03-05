@@ -4,6 +4,7 @@ mod commands;
 mod error;
 mod output;
 mod paginate;
+mod sanitize;
 mod validate;
 
 use clap::{Parser, Subcommand};
@@ -55,6 +56,10 @@ struct Cli {
     /// Preview the API request without executing it
     #[arg(long, global = true)]
     dry_run: bool,
+
+    /// Sanitize API responses to redact potential prompt injection patterns
+    #[arg(long, global = true)]
+    sanitize: bool,
 }
 
 #[derive(Subcommand)]
@@ -643,6 +648,7 @@ async fn main() {
 async fn run(cli: Cli) -> error::Result<()> {
     let format = cli.output;
     let dry_run = cli.dry_run;
+    output::set_sanitize(cli.sanitize);
 
     // Commands that don't require auth
     match &cli.command {

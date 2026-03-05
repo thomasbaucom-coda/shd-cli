@@ -1,6 +1,31 @@
 use crate::error::Result;
+use crate::sanitize;
 use comfy_table::{Cell, Table};
 use serde_json::Value;
+
+/// Whether to sanitize output against prompt injection. Set globally.
+static SANITIZE_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_sanitize(enabled: bool) {
+    SANITIZE_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn should_sanitize() -> bool {
+    SANITIZE_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn maybe_sanitize(value: &Value) -> Value {
+    if should_sanitize() {
+        let mut sanitized = value.clone();
+        let count = sanitize::sanitize_value(&mut sanitized);
+        if count > 0 {
+            eprintln!("[sanitize] Redacted {count} potential prompt injection pattern(s) in response.");
+        }
+        sanitized
+    } else {
+        value.clone()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
@@ -22,15 +47,16 @@ impl OutputFormat {
 
 /// Print a single API response in the requested format.
 pub fn print_response(value: &Value, format: OutputFormat) -> Result<()> {
+    let value = maybe_sanitize(value);
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(value)?);
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         OutputFormat::Table => {
-            print_as_table(value);
+            print_as_table(&value);
         }
         OutputFormat::Ndjson => {
-            print_ndjson(value)?;
+            print_ndjson(&value)?;
         }
     }
     Ok(())
@@ -38,17 +64,18 @@ pub fn print_response(value: &Value, format: OutputFormat) -> Result<()> {
 
 /// Print a list response (with `items` array) in the requested format.
 pub fn print_list_response(value: &Value, format: OutputFormat) -> Result<()> {
+    let value = maybe_sanitize(value);
     let items = value.get("items").and_then(|v| v.as_array());
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(value)?);
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         OutputFormat::Table => {
             if let Some(items) = items {
                 print_items_as_table(items);
             } else {
-                print_as_table(value);
+                print_as_table(&value);
             }
         }
         OutputFormat::Ndjson => {
@@ -57,7 +84,7 @@ pub fn print_list_response(value: &Value, format: OutputFormat) -> Result<()> {
                     println!("{}", serde_json::to_string(item)?);
                 }
             } else {
-                println!("{}", serde_json::to_string(value)?);
+                println!("{}", serde_json::to_string(&value)?);
             }
         }
     }
