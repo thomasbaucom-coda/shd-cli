@@ -11,6 +11,9 @@ pub enum CodaError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    #[error("Tool contract changed ({tool}): {message}")]
+    ContractChanged { tool: String, message: String },
+
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
