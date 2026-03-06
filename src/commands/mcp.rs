@@ -4,15 +4,16 @@ use crate::error::{CodaError, Result};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::tool_registry;
-
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 pub async fn start() -> Result<()> {
-    eprintln!("[coda mcp] Starting MCP server over stdio ({} tools)...", tool_registry::TOOLS.len());
-
     let token = auth::resolve_token(None)?;
     let client = CodaClient::new(token)?;
+
+    // Fetch tools dynamically from the Coda MCP endpoint
+    eprintln!("[coda mcp] Fetching tools from Coda...");
+    let tools = client.fetch_tools().await?;
+    eprintln!("[coda mcp] Starting MCP server over stdio ({} tools)...", tools.len());
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
@@ -28,7 +29,7 @@ pub async fn start() -> Result<()> {
                 let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
                 let params = req.get("params").cloned().unwrap_or(json!({}));
 
-                let result = handle_request(method, &params, &client).await;
+                let result = handle_request(method, &params, &client, &tools).await;
 
                 if !is_notification {
                     let id = req.get("id").unwrap_or(&Value::Null);
@@ -72,7 +73,7 @@ pub async fn start() -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(method: &str, params: &Value, client: &CodaClient) -> Result<Value> {
+async fn handle_request(method: &str, params: &Value, client: &CodaClient, tools: &[Value]) -> Result<Value> {
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -83,35 +84,10 @@ async fn handle_request(method: &str, params: &Value, client: &CodaClient) -> Re
             "capabilities": { "tools": {} }
         })),
         "notifications/initialized" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": build_tools_list() })),
+        "tools/list" => Ok(json!({ "tools": tools })),
         "tools/call" => handle_tool_call(params, client).await,
         _ => Err(CodaError::Other(format!("Method not supported: {method}"))),
     }
-}
-
-fn build_tools_list() -> Vec<Value> {
-    tool_registry::TOOLS
-        .iter()
-        .map(|tool| {
-            let mut properties = json!({});
-            let mut required_arr = vec![];
-            for (field, field_type) in tool.required {
-                properties[field] = json!({"type": field_type});
-                required_arr.push(json!(field));
-            }
-
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "inputSchema": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required_arr,
-                    "additionalProperties": true,
-                }
-            })
-        })
-        .collect()
 }
 
 async fn handle_tool_call(params: &Value, client: &CodaClient) -> Result<Value> {

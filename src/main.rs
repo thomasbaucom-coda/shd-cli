@@ -4,7 +4,6 @@ mod commands;
 mod error;
 mod output;
 mod sanitize;
-mod tool_registry;
 mod validate;
 
 use clap::{Parser, Subcommand};

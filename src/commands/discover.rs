@@ -1,60 +1,63 @@
 use crate::client::CodaClient;
 use crate::error::Result;
-use crate::tool_registry;
 
-/// Discover all available tools by probing the endpoint.
+/// Discover all available tools by fetching from the MCP endpoint.
+/// This is fully dynamic — new tools appear without a CLI rebuild.
 pub async fn discover_all(client: &CodaClient) -> Result<()> {
-    println!("Probing tool endpoint for available tools...\n");
+    eprintln!("Fetching tools from Coda MCP endpoint...\n");
 
-    let mut available = 0u32;
-    let mut not_found = Vec::new();
+    let tools = client.fetch_tools().await?;
 
-    for tool in tool_registry::TOOLS {
-        let result = client.probe_tool(tool.name).await?;
-        let exists = result.get("exists").and_then(|v| v.as_bool()).unwrap_or(false);
+    for tool in &tools {
+        let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+        let desc = tool.get("description").and_then(|d| d.as_str()).unwrap_or("");
 
-        if exists {
-            let issues = result
-                .get("schema")
-                .and_then(|s| s.get("issues"))
-                .and_then(|i| i.as_array())
-                .cloned()
-                .unwrap_or_default();
+        let required = tool.get("inputSchema")
+            .and_then(|s| s.get("required"))
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_else(|| "(none)".into());
 
-            let required: Vec<String> = issues
-                .iter()
-                .filter_map(|i| {
-                    let path = i.get("path").and_then(|p| p.as_array())?;
-                    let field = path.last()?.as_str()?;
-                    if field == "toolName" { return None; }
-                    let expected = i.get("expected").and_then(|e| e.as_str()).unwrap_or("any");
-                    Some(format!("{field} ({expected})"))
-                })
-                .collect();
-
-            let req_str = if required.is_empty() {
-                "(none)".to_string()
-            } else {
-                required.join(", ")
-            };
-            println!("  {:30} required: {req_str}", tool.name);
-            available += 1;
+        let desc_short = if desc.len() > 50 {
+            format!("{}...", &desc[..47])
         } else {
-            not_found.push(tool.name.to_string());
-        }
+            desc.to_string()
+        };
+
+        println!("  {name:30} {desc_short:52} required: [{required}]");
     }
 
-    println!("\n{available} tools available, {} not found", not_found.len());
-    if !not_found.is_empty() {
-        println!("Not found: {}", not_found.join(", "));
-    }
-
+    eprintln!("\n{} tools available.", tools.len());
     Ok(())
 }
 
-/// Discover a single tool's schema by probing it.
+/// Discover a single tool's schema by fetching the full list and filtering.
 pub async fn discover_one(client: &CodaClient, tool_name: &str) -> Result<()> {
-    let result = client.probe_tool(tool_name).await?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    let tools = client.fetch_tools().await?;
+
+    let tool = tools.iter().find(|t| {
+        t.get("name").and_then(|n| n.as_str()) == Some(tool_name)
+    });
+
+    match tool {
+        Some(t) => {
+            println!("{}", serde_json::to_string_pretty(t)?);
+        }
+        None => {
+            // Tool not in list — might have been removed
+            let available: Vec<&str> = tools.iter()
+                .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                .collect();
+
+            eprintln!("Tool '{}' not found.", tool_name);
+            eprintln!("Available tools: {}", available.join(", "));
+        }
+    }
+
     Ok(())
 }

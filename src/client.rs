@@ -94,6 +94,7 @@ impl CodaClient {
     }
 
     /// Probe a tool with empty payload to discover its required fields.
+    #[allow(dead_code)]
     pub async fn probe_tool(&self, tool_name: &str) -> Result<Value> {
         let url = format!("{}/tool", self.tool_base_url);
         let body = serde_json::json!({
@@ -138,6 +139,51 @@ impl CodaClient {
             "exists": false,
             "error": resp_body.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown"),
         }))
+    }
+
+    /// Fetch all available tools from the MCP endpoint via tools/list.
+    /// Calls the Streamable HTTP MCP endpoint and parses the SSE response.
+    pub async fn fetch_tools(&self) -> Result<Vec<Value>> {
+        let url = self.tool_base_url.clone();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {},
+        });
+
+        let response = self.http
+            .post(&url)
+            .header("Accept", "application/json, text/event-stream")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        if status == 401 {
+            return Err(CodaError::Api {
+                status,
+                message: "Invalid token. Generate an MCP-scoped token at https://coda.io/account".into(),
+            });
+        }
+
+        let text = response.text().await.unwrap_or_default();
+
+        // Parse SSE: look for "data:" lines containing the tools/list result
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data:") {
+                if let Ok(msg) = serde_json::from_str::<Value>(data.trim()) {
+                    if let Some(tools) = msg.get("result")
+                        .and_then(|r| r.get("tools"))
+                        .and_then(|t| t.as_array())
+                    {
+                        return Ok(tools.clone());
+                    }
+                }
+            }
+        }
+
+        Err(CodaError::Other("Failed to fetch tool list from MCP endpoint".into()))
     }
 
     /// Parse a tool endpoint error into a structured, agent-friendly CodaError.
