@@ -1,6 +1,9 @@
 use crate::auth;
 use crate::client::CodaClient;
 use crate::error::{CodaError, Result};
+use crate::output;
+use crate::schema_cache;
+use crate::trace;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -11,9 +14,14 @@ pub async fn start() -> Result<()> {
     let client = CodaClient::new(token)?;
 
     // Fetch tools dynamically from the Coda MCP endpoint
-    eprintln!("[coda mcp] Fetching tools from Coda...");
-    let tools = client.fetch_tools().await?;
-    eprintln!("[coda mcp] Starting MCP server over stdio ({} tools)...", tools.len());
+    output::info("[coda mcp] Fetching tools from Coda...\n");
+    let mut tools = client.fetch_tools().await?;
+    schema_cache::save(&tools)?;
+
+    output::info(&format!(
+        "[coda mcp] Starting MCP server over stdio ({} tools)...\n",
+        tools.len(),
+    ));
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
@@ -29,7 +37,15 @@ pub async fn start() -> Result<()> {
                 let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
                 let params = req.get("params").cloned().unwrap_or(json!({}));
 
-                let result = handle_request(method, &params, &client, &tools).await;
+                // On tools/list, refresh if cache is expired
+                let result = if method == "tools/list" {
+                    match refresh_if_expired(&client, &mut tools).await {
+                        Ok(()) => Ok(json!({ "tools": tools })),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    handle_request(method, &params, &client, &tools).await
+                };
 
                 if !is_notification {
                     let id = req.get("id").unwrap_or(&Value::Null);
@@ -43,8 +59,11 @@ pub async fn start() -> Result<()> {
                             "jsonrpc": "2.0",
                             "id": id,
                             "error": {
-                                "code": -32603,
-                                "message": e.to_string()
+                                "code": error_code(&e),
+                                "message": e.to_string(),
+                                "data": {
+                                    "type": error_type(&e),
+                                }
                             }
                         }),
                     };
@@ -73,7 +92,23 @@ pub async fn start() -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(method: &str, params: &Value, client: &CodaClient, tools: &[Value]) -> Result<Value> {
+/// Refresh tools from network if the schema cache is expired.
+async fn refresh_if_expired(client: &CodaClient, tools: &mut Vec<Value>) -> Result<()> {
+    if schema_cache::load()?.is_none() {
+        output::info("[coda mcp] Cache expired, refreshing tools...\n");
+        let fresh = client.fetch_tools().await?;
+        schema_cache::save(&fresh)?;
+        *tools = fresh;
+    }
+    Ok(())
+}
+
+async fn handle_request(
+    method: &str,
+    params: &Value,
+    client: &CodaClient,
+    tools: &[Value],
+) -> Result<Value> {
     match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -85,27 +120,74 @@ async fn handle_request(method: &str, params: &Value, client: &CodaClient, tools
         })),
         "notifications/initialized" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools })),
-        "tools/call" => handle_tool_call(params, client).await,
+        "tools/call" => handle_tool_call(params, client, tools).await,
         _ => Err(CodaError::Other(format!("Method not supported: {method}"))),
     }
 }
 
-async fn handle_tool_call(params: &Value, client: &CodaClient) -> Result<Value> {
-    let tool_name = params.get("name").and_then(|n| n.as_str())
+async fn handle_tool_call(params: &Value, client: &CodaClient, tools: &[Value]) -> Result<Value> {
+    let tool_name = params
+        .get("name")
+        .and_then(|n| n.as_str())
         .ok_or_else(|| CodaError::Validation("Missing 'name' in tools/call".into()))?;
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    // All tools dispatch through the same endpoint
+    // Schema validation from cached tools
+    if let Some(tool_schema) = schema_cache::find_tool(tools, tool_name) {
+        schema_cache::validate_payload(tool_schema, &args)?;
+    }
+
+    trace::emit_request(tool_name, &args);
+    let start = std::time::Instant::now();
+
     let result = client.call_tool(tool_name, args).await;
+    let elapsed_ms = start.elapsed().as_millis() as u64;
 
     match result {
-        Ok(val) => Ok(json!({
-            "content": [{ "type": "text", "text": serde_json::to_string_pretty(&val).unwrap_or_default() }],
-            "isError": false
-        })),
-        Err(e) => Ok(json!({
-            "content": [{ "type": "text", "text": e.to_string() }],
-            "isError": true
-        })),
+        Ok(val) => {
+            trace::emit_response(tool_name, &val, elapsed_ms, false);
+            Ok(json!({
+                "content": [{ "type": "text", "text": serde_json::to_string_pretty(&val).unwrap_or_default() }],
+                "isError": false
+            }))
+        }
+        Err(e) => {
+            trace::emit_response(
+                tool_name,
+                &json!({"error": e.to_string()}),
+                elapsed_ms,
+                true,
+            );
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string(&json!({
+                        "error": true,
+                        "type": error_type(&e),
+                        "message": e.to_string(),
+                    })).unwrap_or_else(|_| e.to_string())
+                }],
+                "isError": true
+            }))
+        }
+    }
+}
+
+fn error_type(e: &CodaError) -> &'static str {
+    match e {
+        CodaError::ContractChanged { .. } => "contract_changed",
+        CodaError::Api { .. } => "api_error",
+        CodaError::Validation(_) => "validation_error",
+        CodaError::NoToken => "auth_required",
+        _ => "error",
+    }
+}
+
+fn error_code(e: &CodaError) -> i32 {
+    match e {
+        CodaError::Validation(_) => -32602,          // Invalid params
+        CodaError::NoToken => -32001,                // Auth required
+        CodaError::ContractChanged { .. } => -32002, // Tool changed
+        _ => -32603,                                 // Internal error
     }
 }

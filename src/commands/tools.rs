@@ -1,7 +1,7 @@
 use crate::client::CodaClient;
 use crate::error::{CodaError, Result};
 use crate::output::{self, OutputFormat};
-use crate::validate;
+use crate::trace;
 use serde_json::{json, Value};
 
 /// Call any tool by name with a JSON payload.
@@ -11,6 +11,7 @@ pub async fn call(
     tool_name: &str,
     payload: Value,
     dry_run: bool,
+    pick: Option<&str>,
 ) -> Result<()> {
     if dry_run {
         output::print_response(
@@ -20,103 +21,113 @@ pub async fn call(
         return Ok(());
     }
 
-    let result = client.call_tool(tool_name, payload).await?;
-    output::print_response(&result, OutputFormat::Json)?;
-    Ok(())
+    trace::emit_request(tool_name, &payload);
+    let start = std::time::Instant::now();
+
+    let result = client.call_tool(tool_name, payload).await;
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(ref value) => {
+            trace::emit_response(tool_name, value, elapsed_ms, false);
+            if let Some(paths) = pick {
+                pick_fields(value, paths)?;
+            } else {
+                output::print_response(value, OutputFormat::Json)?;
+            }
+        }
+        Err(ref e) => {
+            trace::emit_response(
+                tool_name,
+                &json!({"error": e.to_string()}),
+                elapsed_ms,
+                true,
+            );
+        }
+    }
+
+    result.map(|_| ())
 }
 
-/// Import rows from stdin, auto-batched.
-/// Reads NDJSON or JSON array, chunks into batches of batch_size.
-pub async fn import_rows(
-    client: &CodaClient,
-    doc_id: &str,
-    table_id: &str,
-    columns_json: &str,
-    batch_size: usize,
-    dry_run: bool,
-) -> Result<()> {
-    validate::validate_resource_id(doc_id, "docId")?;
-    validate::validate_resource_id(table_id, "tableId")?;
-
-    let columns: Value = validate::resolve_json_payload(columns_json)?;
-
-    let mut input = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
-        .map_err(CodaError::Io)?;
-    let input = input.trim();
-
-    if input.is_empty() {
-        return Err(CodaError::Validation(
-            "No input on stdin. Pipe rows as JSON array of arrays.".into(),
-        ));
+/// Extract one or more fields from a JSON value.
+/// Supports comma-separated paths: "name,id" extracts both as tab-separated output.
+/// Each path is dot-separated: "items.0.id" walks into nested objects/arrays.
+fn pick_fields(value: &Value, paths: &str) -> Result<()> {
+    if paths.contains(',') {
+        let resolved: Vec<&Value> = paths
+            .split(',')
+            .map(|p| resolve_path(value, p.trim()))
+            .collect::<Result<Vec<_>>>()?;
+        output::print_picked_multi(&resolved)
+    } else {
+        let picked = resolve_path(value, paths)?;
+        output::print_picked(picked)
     }
+}
 
-    let all_rows: Vec<Value> = if input.starts_with('[') {
-        let parsed: Value = serde_json::from_str(input).map_err(|e| {
-            CodaError::Validation(format!("Invalid JSON array: {e}"))
+/// Walk a dot-separated path through a JSON value.
+fn resolve_path<'a>(value: &'a Value, path: &str) -> Result<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = if let Ok(idx) = segment.parse::<usize>() {
+            current.get(idx)
+        } else {
+            current.get(segment)
+        }
+        .ok_or_else(|| {
+            CodaError::Validation(format!("Field '{path}' not found (failed at '{segment}')"))
         })?;
-        match parsed {
-            Value::Array(arr) => arr,
-            _ => vec![parsed],
-        }
-    } else {
-        input
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .enumerate()
-            .map(|(i, line)| {
-                serde_json::from_str(line).map_err(|e| {
-                    CodaError::Validation(format!("Invalid JSON on line {}: {e}", i + 1))
-                })
-            })
-            .collect::<Result<Vec<Value>>>()?
-    };
+    }
+    Ok(current)
+}
 
-    if all_rows.is_empty() {
-        eprintln!("[import] No rows to import.");
-        return Ok(());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn pick_top_level_key() {
+        let value = json!({"name": "Alice", "age": 30});
+        assert!(pick_fields(&value, "name").is_ok());
     }
 
-    let total_rows = all_rows.len();
-    let mut batch_num = 0u32;
-
-    for chunk in all_rows.chunks(batch_size) {
-        batch_num += 1;
-
-        let payload = json!({
-            "docId": doc_id,
-            "tableId": table_id,
-            "columns": columns,
-            "rows": chunk,
-        });
-
-        if dry_run {
-            let dry = json!({
-                "batch": batch_num,
-                "rowCount": chunk.len(),
-                "toolName": "table_add_rows",
-            });
-            println!("{}", serde_json::to_string(&dry)?);
-            continue;
-        }
-
-        let result = client.call_tool("table_add_rows", payload).await?;
-        let row_count = result.get("rowCount").and_then(|v| v.as_u64()).unwrap_or(0);
-        eprintln!(
-            "[import] Batch {batch_num}: sent {} rows (table now has {row_count} total)",
-            chunk.len()
-        );
+    #[test]
+    fn pick_dot_path() {
+        let value = json!({"user": {"name": "Alice", "email": "a@b.com"}});
+        assert!(pick_fields(&value, "user.name").is_ok());
     }
 
-    if dry_run {
-        eprintln!("[import] Dry run: {total_rows} rows in {batch_num} batches of up to {batch_size}.");
-    } else {
-        let result = json!({
-            "totalRows": total_rows,
-            "batches": batch_num,
-        });
-        println!("{}", serde_json::to_string_pretty(&result)?);
+    #[test]
+    fn pick_array_index() {
+        let value = json!({"items": [{"id": 1}, {"id": 2}]});
+        assert!(pick_fields(&value, "items.0.id").is_ok());
     }
 
-    Ok(())
+    #[test]
+    fn pick_missing_field_errors() {
+        let value = json!({"name": "Alice"});
+        let err = pick_fields(&value, "missing").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn pick_deep_missing_errors() {
+        let value = json!({"a": {"b": 1}});
+        let err = pick_fields(&value, "a.c").unwrap_err();
+        assert!(err.to_string().contains("failed at 'c'"));
+    }
+
+    #[test]
+    fn pick_multi_fields() {
+        let value = json!({"name": "Alice", "id": "abc123"});
+        assert!(pick_fields(&value, "name,id").is_ok());
+    }
+
+    #[test]
+    fn pick_multi_with_missing_errors() {
+        let value = json!({"name": "Alice"});
+        let err = pick_fields(&value, "name,missing").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
 }

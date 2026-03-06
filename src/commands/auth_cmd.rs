@@ -27,10 +27,13 @@ pub async fn login(token: Option<&str>) -> Result<()> {
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    eprintln!("Authenticated as: {name}");
+    crate::output::info(&format!("Authenticated as: {name}\n"));
 
     auth::store_token(&token)?;
-    eprintln!("Token saved to {}", auth::credential_path_display());
+    crate::output::info(&format!(
+        "Token saved to {}\n",
+        auth::credential_path_display()
+    ));
 
     Ok(())
 }

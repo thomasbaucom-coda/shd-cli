@@ -2,8 +2,11 @@ mod auth;
 mod client;
 mod commands;
 mod error;
+mod fuzzy;
 mod output;
 mod sanitize;
+mod schema_cache;
+mod trace;
 mod validate;
 
 use clap::{Parser, Subcommand};
@@ -59,6 +62,22 @@ struct Cli {
     /// Sanitize responses to redact prompt injection patterns
     #[arg(long, global = true)]
     sanitize: bool,
+
+    /// Emit NDJSON execution traces to stderr
+    #[arg(long, global = true)]
+    trace: bool,
+
+    /// Extract a specific field from the response (dot-path, e.g. "name" or "items.0.id")
+    #[arg(long, global = true)]
+    pick: Option<String>,
+
+    /// Resolve tool name via fuzzy matching against cached tools
+    #[arg(long, global = true)]
+    fuzzy: bool,
+
+    /// Suppress informational stderr messages (status, cache hints)
+    #[arg(long, global = true)]
+    quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -73,23 +92,19 @@ enum Commands {
     Discover {
         /// Tool name to inspect (omit to list all)
         tool_name: Option<String>,
-    },
-
-    /// Import rows from stdin, auto-batched (convenience wrapper)
-    Import {
-        #[arg(allow_hyphen_values = true)]
-        doc_id: String,
-        table_id: String,
-        /// Column IDs as JSON array
+        /// Force refresh from network (ignore cache)
         #[arg(long)]
-        columns: String,
-        /// Rows per batch (max 100, default 100)
-        #[arg(long, default_value = "100")]
-        batch_size: usize,
+        refresh: bool,
+        /// Filter tools by name or description (case-insensitive substring)
+        #[arg(long)]
+        filter: Option<String>,
     },
 
     /// Start an MCP server over stdio
     Mcp,
+
+    /// Start a persistent shell for agents (JSON-line protocol over stdio)
+    Shell,
 
     /// Call any tool dynamically. Usage: coda <tool_name> [--json '{...}']
     #[command(external_subcommand)]
@@ -127,7 +142,10 @@ async fn main() {
             },
             "message": e.to_string(),
         });
-        eprintln!("{}", serde_json::to_string_pretty(&error_json).unwrap_or_else(|_| e.to_string()));
+        eprintln!(
+            "{}",
+            serde_json::to_string_pretty(&error_json).unwrap_or_else(|_| e.to_string())
+        );
         std::process::exit(1);
     }
 }
@@ -135,13 +153,13 @@ async fn main() {
 async fn run(cli: Cli) -> error::Result<()> {
     let dry_run = cli.dry_run;
     output::set_sanitize(cli.sanitize);
+    trace::set_trace(cli.trace);
+    output::set_quiet(cli.quiet);
 
     // Auth doesn't require a token
     if let Commands::Auth { action } = &cli.command {
         return match action {
-            AuthAction::Login { token } => {
-                commands::auth_cmd::login(token.as_deref()).await
-            }
+            AuthAction::Login { token } => commands::auth_cmd::login(token.as_deref()).await,
             AuthAction::Status => commands::auth_cmd::status(),
             AuthAction::Logout => commands::auth_cmd::logout(),
         };
@@ -156,40 +174,40 @@ async fn run(cli: Cli) -> error::Result<()> {
     let client = client::CodaClient::new(token)?;
 
     match cli.command {
-        Commands::Discover { tool_name } => {
-            match tool_name {
-                Some(name) => commands::discover::discover_one(&client, &name).await,
-                None => commands::discover::discover_all(&client).await,
-            }
-        }
+        Commands::Discover {
+            tool_name,
+            refresh,
+            filter,
+        } => match tool_name {
+            Some(name) => commands::discover::discover_one(&client, &name, refresh).await,
+            None => commands::discover::discover_all(&client, refresh, filter.as_deref()).await,
+        },
 
-        Commands::Import { doc_id, table_id, columns, batch_size } => {
-            let size = batch_size.min(100);
-            commands::tools::import_rows(&client, &doc_id, &table_id, &columns, size, dry_run).await
-        }
+        Commands::Mcp => commands::mcp::start().await,
 
-        Commands::Mcp => {
-            commands::mcp::start().await
-        }
+        Commands::Shell => commands::shell::start(&client, dry_run).await,
 
         Commands::Tool(args) => {
-            dispatch_tool(&client, &args, dry_run).await
+            dispatch_tool(&client, &args, dry_run, cli.pick.as_deref(), cli.fuzzy).await
         }
 
         Commands::Auth { .. } => unreachable!(),
     }
 }
 
-/// Parse dynamic tool args: <tool_name> [--json <payload>] [--dry-run] [--sanitize]
+/// Parse dynamic tool args: <tool_name> [--json <payload>] [--dry-run] [--sanitize] [--trace] [--pick <field>] [--fuzzy]
 /// If no --json is provided, sends empty payload.
 async fn dispatch_tool(
     client: &client::CodaClient,
     args: &[String],
     mut dry_run: bool,
+    mut pick: Option<&str>,
+    mut use_fuzzy: bool,
 ) -> error::Result<()> {
     if args.is_empty() {
         return Err(error::CodaError::Validation(
-            "Usage: coda <tool_name> [--json '{...}']\nRun `coda discover` to see available tools.".into(),
+            "Usage: coda <tool_name> [--json '{...}']\nRun `coda discover` to see available tools."
+                .into(),
         ));
     }
 
@@ -203,16 +221,63 @@ async fn dispatch_tool(
     if args.iter().any(|a| a == "--sanitize") {
         output::set_sanitize(true);
     }
+    if args.iter().any(|a| a == "--trace") {
+        trace::set_trace(true);
+    }
+    if args.iter().any(|a| a == "--fuzzy") {
+        use_fuzzy = true;
+    }
+    if args.iter().any(|a| a == "--quiet") {
+        output::set_quiet(true);
+    }
+
+    // Parse --pick from external subcommand args
+    let pick_owned: Option<String> = args
+        .iter()
+        .position(|a| a == "--pick")
+        .and_then(|pos| args.get(pos + 1).cloned());
+    if pick.is_none() {
+        if let Some(ref p) = pick_owned {
+            pick = Some(p.as_str());
+        }
+    }
+
+    // Fuzzy resolve tool name if --fuzzy is set
+    let resolved_name = if use_fuzzy {
+        let tools = match schema_cache::load()? {
+            Some(cached) => cached.tools,
+            None => {
+                output::info("No cached tools. Fetching from Coda MCP endpoint...\n");
+                let tools = client.fetch_tools().await?;
+                schema_cache::save(&tools)?;
+                tools
+            }
+        };
+        let name = fuzzy::resolve(tool_name, &tools)?;
+        if name != *tool_name {
+            output::info(&format!("[fuzzy] Resolved '{tool_name}' -> '{name}'\n"));
+        }
+        name
+    } else {
+        tool_name.to_string()
+    };
 
     // Find --json value
     let payload = if let Some(pos) = args.iter().position(|a| a == "--json") {
-        let json_str = args.get(pos + 1).ok_or_else(|| {
-            error::CodaError::Validation("--json requires a value".into())
-        })?;
+        let json_str = args
+            .get(pos + 1)
+            .ok_or_else(|| error::CodaError::Validation("--json requires a value".into()))?;
         validate::resolve_json_payload(json_str)?
     } else {
         serde_json::json!({})
     };
 
-    commands::tools::call(client, tool_name, payload, dry_run).await
+    // Client-side schema validation if cache available
+    if let Ok(Some(cached)) = schema_cache::load() {
+        if let Some(tool_schema) = schema_cache::find_tool(&cached.tools, &resolved_name) {
+            schema_cache::validate_payload(tool_schema, &payload)?;
+        }
+    }
+
+    commands::tools::call(client, &resolved_name, payload, dry_run, pick).await
 }

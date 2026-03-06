@@ -3,6 +3,7 @@ use crate::error::CodaError;
 /// Validates a Coda resource identifier (docId, tableId, rowId, etc.).
 /// Rejects control characters, URL-special characters, path traversal,
 /// and percent-encoded bypasses.
+#[allow(dead_code)]
 pub fn validate_resource_id<'a>(value: &'a str, name: &str) -> Result<&'a str, CodaError> {
     if value.is_empty() {
         return Err(CodaError::Validation(format!("{name} must not be empty")));
@@ -42,17 +43,15 @@ pub fn validate_resource_id<'a>(value: &'a str, name: &str) -> Result<&'a str, C
 /// Validates a raw JSON payload string parses as valid JSON.
 /// Returns the parsed value.
 pub fn validate_json_payload(raw: &str) -> Result<serde_json::Value, CodaError> {
-    serde_json::from_str(raw).map_err(|e| {
-        CodaError::Validation(format!("Invalid JSON payload: {e}"))
-    })
+    serde_json::from_str(raw)
+        .map_err(|e| CodaError::Validation(format!("Invalid JSON payload: {e}")))
 }
 
 /// Resolve a JSON payload from either a literal string or stdin (if value is "-").
 pub fn resolve_json_payload(value: &str) -> Result<serde_json::Value, CodaError> {
     if value == "-" {
         let mut buf = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
-            .map_err(CodaError::Io)?;
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).map_err(CodaError::Io)?;
         validate_json_payload(buf.trim())
     } else {
         validate_json_payload(value)

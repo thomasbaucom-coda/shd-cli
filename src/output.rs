@@ -5,13 +5,26 @@ use serde_json::Value;
 
 /// Whether to sanitize output against prompt injection. Set globally.
 static SANITIZE_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether to suppress informational stderr messages.
+static QUIET_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_sanitize(enabled: bool) {
     SANITIZE_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub fn set_quiet(enabled: bool) {
+    QUIET_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn should_sanitize() -> bool {
     SANITIZE_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Print an informational message to stderr, suppressed by --quiet.
+pub fn info(msg: &str) {
+    if !QUIET_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        eprint!("{msg}");
+    }
 }
 
 fn maybe_sanitize(value: &Value) -> std::borrow::Cow<'_, Value> {
@@ -19,7 +32,9 @@ fn maybe_sanitize(value: &Value) -> std::borrow::Cow<'_, Value> {
         let mut sanitized = value.clone();
         let count = sanitize::sanitize_value(&mut sanitized);
         if count > 0 {
-            eprintln!("[sanitize] Redacted {count} potential prompt injection pattern(s) in response.");
+            eprintln!(
+                "[sanitize] Redacted {count} potential prompt injection pattern(s) in response."
+            );
         }
         std::borrow::Cow::Owned(sanitized)
     } else {
@@ -40,7 +55,9 @@ impl OutputFormat {
             "json" => Ok(Self::Json),
             "table" => Ok(Self::Table),
             "ndjson" => Ok(Self::Ndjson),
-            _ => Err(format!("Unknown output format: {s}. Use json, table, or ndjson.")),
+            _ => Err(format!(
+                "Unknown output format: {s}. Use json, table, or ndjson."
+            )),
         }
     }
 }
@@ -80,6 +97,29 @@ fn print_as_table(value: &Value) {
             }
         }
     }
+}
+
+/// Print a picked value: strings without quotes, other types as compact JSON.
+pub fn print_picked(value: &Value) -> Result<()> {
+    match value {
+        Value::String(s) => println!("{s}"),
+        _ => println!("{}", serde_json::to_string(value)?),
+    }
+    Ok(())
+}
+
+/// Print multiple picked values as tab-separated on one line.
+/// Strings print without quotes, other types as compact JSON.
+pub fn print_picked_multi(values: &[&Value]) -> Result<()> {
+    let parts: Vec<String> = values
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            _ => serde_json::to_string(v).unwrap_or_default(),
+        })
+        .collect();
+    println!("{}", parts.join("\t"));
+    Ok(())
 }
 
 fn format_cell_value(val: &Value) -> String {
