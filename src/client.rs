@@ -79,7 +79,7 @@ impl CodaClient {
     ) -> Value {
         let url = match payload.get("docId").and_then(|v| v.as_str()) {
             Some(doc_id) if !doc_id.is_empty() => {
-                format!("{}/docs/{}/tool", self.tool_base_url, doc_id)
+                format!("{}/docs/{}/tool", self.tool_base_url, crate::validate::encode_path_segment(doc_id))
             }
             _ => format!("{}/tool", self.tool_base_url),
         };
@@ -104,6 +104,12 @@ impl CodaClient {
         let response = self.http.post(&url).json(&body).send().await?;
         let status = response.status().as_u16();
         let resp_body: Value = response.json().await.unwrap_or(Value::Null);
+
+        // Auth failure — propagate as a real error, not "tool not found"
+        if status == 401 {
+            let message = resp_body.get("message").and_then(|m| m.as_str()).unwrap_or("Unauthorized");
+            return Err(CodaError::Api { status, message: message.to_string() });
+        }
 
         if status == 400 {
             // Validation error — extract the schema from issues

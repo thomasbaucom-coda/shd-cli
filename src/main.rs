@@ -4,6 +4,7 @@ mod commands;
 mod error;
 mod output;
 mod sanitize;
+mod tool_registry;
 mod validate;
 
 use clap::{Parser, Subcommand};
@@ -180,12 +181,12 @@ async fn run(cli: Cli) -> error::Result<()> {
     }
 }
 
-/// Parse dynamic tool args: <tool_name> [--json <payload>]
+/// Parse dynamic tool args: <tool_name> [--json <payload>] [--dry-run] [--sanitize]
 /// If no --json is provided, sends empty payload.
 async fn dispatch_tool(
     client: &client::CodaClient,
     args: &[String],
-    dry_run: bool,
+    mut dry_run: bool,
 ) -> error::Result<()> {
     if args.is_empty() {
         return Err(error::CodaError::Validation(
@@ -194,6 +195,15 @@ async fn dispatch_tool(
     }
 
     let tool_name = &args[0];
+
+    // Check for flags that may appear after the tool name
+    // (clap can't parse them as global flags in external_subcommand)
+    if args.iter().any(|a| a == "--dry-run") {
+        dry_run = true;
+    }
+    if args.iter().any(|a| a == "--sanitize") {
+        output::set_sanitize(true);
+    }
 
     // Find --json value
     let payload = if let Some(pos) = args.iter().position(|a| a == "--json") {
