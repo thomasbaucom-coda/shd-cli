@@ -6,3 +6,4 @@
 npm/bin/coda-native*
 npm/node_modules
 test_build_doc.py
+build_competitive_intel.py
