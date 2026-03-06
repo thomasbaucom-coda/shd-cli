@@ -1,15 +1,4 @@
 pub mod auth_cmd;
-pub mod docs;
-pub mod pages;
-pub mod tables;
-pub mod columns;
-pub mod rows;
-pub mod formulas;
-pub mod controls;
-pub mod folders;
-pub mod whoami;
-pub mod schema;
+pub mod discover;
 pub mod mcp;
-pub mod resolve_url;
-pub mod permissions;
 pub mod tools;

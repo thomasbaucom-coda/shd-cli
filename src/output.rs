@@ -63,6 +63,7 @@ pub fn print_response(value: &Value, format: OutputFormat) -> Result<()> {
 }
 
 /// Print a list response (with `items` array) in the requested format.
+#[allow(dead_code)]
 pub fn print_list_response(value: &Value, format: OutputFormat) -> Result<()> {
     let value = maybe_sanitize(value);
     let items = value.get("items").and_then(|v| v.as_array());
@@ -111,6 +112,7 @@ fn print_as_table(value: &Value) {
     }
 }
 
+#[allow(dead_code)]
 fn print_items_as_table(items: &[Value]) {
     if items.is_empty() {
         println!("(no results)");

@@ -2,31 +2,12 @@ use crate::error::{CodaError, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde_json::Value;
 
-const PUBLIC_API_BASE: &str = "https://coda.io/apis/v1";
 const TOOL_API_BASE: &str = "https://coda.io/apis/mcp/vbeta";
 const CLI_USER_AGENT: &str = concat!("coda-cli/", env!("CARGO_PKG_VERSION"));
 
 pub struct CodaClient {
     http: reqwest::Client,
-    base_url: String,
     tool_base_url: String,
-    #[allow(dead_code)]
-    token: String,
-}
-
-/// Represents a request that may or may not be executed (dry-run support).
-pub struct ApiRequest {
-    pub method: reqwest::Method,
-    pub url: String,
-    pub body: Option<Value>,
-    pub query_params: Vec<(String, String)>,
-}
-
-/// Represents a response from the Coda API.
-pub struct ApiResponse {
-    #[allow(dead_code)]
-    pub status: u16,
-    pub body: Value,
 }
 
 impl CodaClient {
@@ -49,94 +30,40 @@ impl CodaClient {
 
         Ok(Self {
             http,
-            base_url: PUBLIC_API_BASE.to_string(),
             tool_base_url: TOOL_API_BASE.to_string(),
-            token,
         })
     }
 
-    /// Build a public API request without executing it.
-    pub fn build_request(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        body: Option<Value>,
-        query_params: Vec<(String, String)>,
-    ) -> ApiRequest {
-        ApiRequest {
-            method,
-            url: format!("{}{}", self.base_url, path),
-            body,
-            query_params,
-        }
-    }
-
-    /// Execute a public API request.
-    pub async fn execute(&self, req: ApiRequest) -> Result<ApiResponse> {
-        let mut builder = self.http.request(req.method.clone(), &req.url);
-
-        if !req.query_params.is_empty() {
-            builder = builder.query(&req.query_params);
-        }
-
-        if let Some(body) = &req.body {
-            builder = builder.json(body);
-        }
-
-        let response = builder.send().await?;
-        let status = response.status().as_u16();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-
-        if status >= 400 {
-            let message = extract_error_message(&body);
-            return Err(CodaError::Api { status, message });
-        }
-
-        Ok(ApiResponse { status, body })
-    }
-
-    /// Call an internal Coda agent tool via the direct tool endpoint.
-    /// POST /apis/mcp/vbeta/docs/{docId}/tool with {toolName, payload}
+    /// Call a Coda tool via the direct tool endpoint.
+    /// POST /apis/mcp/vbeta/tool (docless) or /apis/mcp/vbeta/docs/{docId}/tool
     pub async fn call_tool(
         &self,
-        doc_id: &str,
         tool_name: &str,
         payload: Value,
     ) -> Result<Value> {
-        let url = format!(
-            "{}/docs/{}/tool",
-            self.tool_base_url,
-            crate::validate::encode_path_segment(doc_id),
-        );
+        // Route via docId if present in payload, otherwise use docless endpoint
+        let url = match payload.get("docId").and_then(|v| v.as_str()) {
+            Some(doc_id) if !doc_id.is_empty() => {
+                format!(
+                    "{}/docs/{}/tool",
+                    self.tool_base_url,
+                    crate::validate::encode_path_segment(doc_id),
+                )
+            }
+            _ => format!("{}/tool", self.tool_base_url),
+        };
 
         let body = serde_json::json!({
             "toolName": tool_name,
             "payload": payload,
         });
 
-        let response = self.http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await?;
-
+        let response = self.http.post(&url).json(&body).send().await?;
         let status = response.status().as_u16();
         let resp_body: Value = response.json().await.unwrap_or(Value::Null);
 
         if status >= 400 {
-            // Try to extract a useful error message from various response formats
-            let message = resp_body
-                .get("result")
-                .and_then(|r| r.get("error"))
-                .and_then(|e| e.as_str())
-                .or_else(|| resp_body.get("message").and_then(|m| m.as_str()))
-                .or_else(|| resp_body.get("statusMessage").and_then(|m| m.as_str()))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    // If no known fields, dump the full body for debugging
-                    serde_json::to_string(&resp_body).unwrap_or_else(|_| "Unknown error".into())
-                });
-            return Err(CodaError::Api { status, message });
+            return Err(Self::parse_tool_error(status, &resp_body, tool_name));
         }
 
         // The tool endpoint wraps results in {toolName, result, executionTime}
@@ -147,13 +74,18 @@ impl CodaClient {
     /// Build a dry-run representation of a tool call.
     pub fn dry_run_tool(
         &self,
-        doc_id: &str,
         tool_name: &str,
         payload: &Value,
     ) -> Value {
+        let url = match payload.get("docId").and_then(|v| v.as_str()) {
+            Some(doc_id) if !doc_id.is_empty() => {
+                format!("{}/docs/{}/tool", self.tool_base_url, doc_id)
+            }
+            _ => format!("{}/tool", self.tool_base_url),
+        };
         serde_json::json!({
             "method": "POST",
-            "url": format!("{}/docs/{}/tool", self.tool_base_url, crate::validate::encode_path_segment(doc_id)),
+            "url": url,
             "body": {
                 "toolName": tool_name,
                 "payload": payload,
@@ -161,43 +93,103 @@ impl CodaClient {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn token(&self) -> &str {
-        &self.token
-    }
-}
-
-fn extract_error_message(body: &Value) -> String {
-    extract_error_message_ref(body).to_string()
-}
-
-fn extract_error_message_ref(body: &Value) -> &str {
-    body.get("message")
-        .and_then(|m| m.as_str())
-        .unwrap_or_else(|| {
-            body.get("statusMessage")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error")
-        })
-}
-
-impl ApiRequest {
-    /// Render this request as a dry-run JSON object for inspection.
-    pub fn to_dry_run_json(&self) -> Value {
-        let mut obj = serde_json::json!({
-            "method": self.method.as_str(),
-            "url": self.url,
+    /// Probe a tool with empty payload to discover its required fields.
+    pub async fn probe_tool(&self, tool_name: &str) -> Result<Value> {
+        let url = format!("{}/tool", self.tool_base_url);
+        let body = serde_json::json!({
+            "toolName": tool_name,
+            "payload": {},
         });
-        if !self.query_params.is_empty() {
-            obj["queryParams"] = serde_json::json!(
-                self.query_params.iter()
-                    .map(|(k, v)| serde_json::json!({k: v}))
-                    .collect::<Vec<_>>()
-            );
+
+        let response = self.http.post(&url).json(&body).send().await?;
+        let status = response.status().as_u16();
+        let resp_body: Value = response.json().await.unwrap_or(Value::Null);
+
+        if status == 400 {
+            // Validation error — extract the schema from issues
+            if let Some(detail) = resp_body.get("codaDetail") {
+                return Ok(serde_json::json!({
+                    "tool": tool_name,
+                    "exists": true,
+                    "schema": detail,
+                }));
+            }
         }
-        if let Some(body) = &self.body {
-            obj["body"] = body.clone();
+
+        if status == 200 {
+            // Tool requires no fields (like whoami)
+            return Ok(serde_json::json!({
+                "tool": tool_name,
+                "exists": true,
+                "schema": {"issues": []},
+                "note": "No required fields",
+            }));
         }
-        obj
+
+        // Tool not found
+        Ok(serde_json::json!({
+            "tool": tool_name,
+            "exists": false,
+            "error": resp_body.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown"),
+        }))
+    }
+
+    /// Parse a tool endpoint error into a structured, agent-friendly CodaError.
+    fn parse_tool_error(status: u16, body: &Value, tool_name: &str) -> CodaError {
+        // Contract validation errors (schema mismatch)
+        if let Some(detail) = body.get("codaDetail") {
+            if let Some(issues) = detail.get("issues").and_then(|v| v.as_array()) {
+                // Check if the tool name itself is invalid (renamed/removed)
+                let is_tool_not_found = issues.iter().any(|i| {
+                    i.get("discriminator").and_then(|d| d.as_str()) == Some("toolName")
+                });
+
+                if is_tool_not_found {
+                    return CodaError::ContractChanged {
+                        tool: tool_name.to_string(),
+                        message: format!(
+                            "Tool '{}' not found. It may have been renamed or removed. Run `coda discover` to see available tools.",
+                            tool_name
+                        ),
+                    };
+                }
+
+                // Schema validation — missing/wrong fields
+                let field_errors: Vec<String> = issues.iter().map(|i| {
+                    let path = i.get("path")
+                        .and_then(|p| p.as_array())
+                        .map(|arr| arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join("."))
+                        .unwrap_or_default();
+                    let msg = i.get("message").and_then(|m| m.as_str()).unwrap_or("invalid");
+                    format!("{path}: {msg}")
+                }).collect();
+
+                return CodaError::ContractChanged {
+                    tool: tool_name.to_string(),
+                    message: format!(
+                        "Validation error for '{}':\n{}\nRun `coda discover {}` to see current schema.",
+                        tool_name,
+                        field_errors.join("\n"),
+                        tool_name,
+                    ),
+                };
+            }
+        }
+
+        // Generic error
+        let message = body.get("result")
+            .and_then(|r| r.get("error"))
+            .and_then(|e| e.as_str())
+            .or_else(|| body.get("message").and_then(|m| m.as_str()))
+            .or_else(|| body.get("statusMessage").and_then(|m| m.as_str()))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                serde_json::to_string(body).unwrap_or_else(|_| "Unknown error".into())
+            });
+
+        CodaError::Api { status, message }
     }
 }

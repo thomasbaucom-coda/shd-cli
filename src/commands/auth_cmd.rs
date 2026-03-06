@@ -19,13 +19,11 @@ pub async fn login(token: Option<&str>) -> Result<()> {
         ));
     }
 
-    // Verify the token works
+    // Verify the token works via the tool endpoint
     let client = CodaClient::new(token.clone())?;
-    let req = client.build_request(reqwest::Method::GET, "/whoami", None, vec![]);
-    let resp = client.execute(req).await?;
+    let resp = client.call_tool("whoami", serde_json::json!({})).await?;
 
     let name = resp
-        .body
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
