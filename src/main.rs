@@ -133,13 +133,7 @@ async fn main() {
     if let Err(e) = result {
         let error_json = serde_json::json!({
             "error": true,
-            "type": match &e {
-                error::CodaError::ContractChanged { .. } => "contract_changed",
-                error::CodaError::Api { .. } => "api_error",
-                error::CodaError::Validation(_) => "validation_error",
-                error::CodaError::NoToken => "auth_required",
-                _ => "error",
-            },
+            "type": e.error_type(),
             "message": e.to_string(),
         });
         eprintln!(
@@ -188,7 +182,8 @@ async fn run(cli: Cli) -> error::Result<()> {
         Commands::Shell => commands::shell::start(&client, dry_run).await,
 
         Commands::Tool(args) => {
-            dispatch_tool(&client, &args, dry_run, cli.pick.as_deref(), cli.fuzzy).await
+            dispatch_tool(&client, &args, dry_run, cli.pick.as_deref(), cli.fuzzy, cli.output)
+                .await
         }
 
         Commands::Auth { .. } => unreachable!(),
@@ -203,6 +198,7 @@ async fn dispatch_tool(
     mut dry_run: bool,
     mut pick: Option<&str>,
     mut use_fuzzy: bool,
+    format: output::OutputFormat,
 ) -> error::Result<()> {
     if args.is_empty() {
         return Err(error::CodaError::Validation(
@@ -279,5 +275,5 @@ async fn dispatch_tool(
         }
     }
 
-    commands::tools::call(client, &resolved_name, payload, dry_run, pick).await
+    commands::tools::call(client, &resolved_name, payload, dry_run, pick, format).await
 }

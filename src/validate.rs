@@ -3,7 +3,6 @@ use crate::error::CodaError;
 /// Validates a Coda resource identifier (docId, tableId, rowId, etc.).
 /// Rejects control characters, URL-special characters, path traversal,
 /// and percent-encoded bypasses.
-#[allow(dead_code)]
 pub fn validate_resource_id<'a>(value: &'a str, name: &str) -> Result<&'a str, CodaError> {
     if value.is_empty() {
         return Err(CodaError::Validation(format!("{name} must not be empty")));

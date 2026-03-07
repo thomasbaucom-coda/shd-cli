@@ -62,7 +62,7 @@ pub async fn start() -> Result<()> {
                                 "code": error_code(&e),
                                 "message": e.to_string(),
                                 "data": {
-                                    "type": error_type(&e),
+                                    "type": e.error_type(),
                                 }
                             }
                         }),
@@ -163,23 +163,13 @@ async fn handle_tool_call(params: &Value, client: &CodaClient, tools: &[Value]) 
                     "type": "text",
                     "text": serde_json::to_string(&json!({
                         "error": true,
-                        "type": error_type(&e),
+                        "type": e.error_type(),
                         "message": e.to_string(),
                     })).unwrap_or_else(|_| e.to_string())
                 }],
                 "isError": true
             }))
         }
-    }
-}
-
-fn error_type(e: &CodaError) -> &'static str {
-    match e {
-        CodaError::ContractChanged { .. } => "contract_changed",
-        CodaError::Api { .. } => "api_error",
-        CodaError::Validation(_) => "validation_error",
-        CodaError::NoToken => "auth_required",
-        _ => "error",
     }
 }
 

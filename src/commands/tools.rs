@@ -1,5 +1,5 @@
 use crate::client::CodaClient;
-use crate::error::{CodaError, Result};
+use crate::error::Result;
 use crate::output::{self, OutputFormat};
 use crate::trace;
 use serde_json::{json, Value};
@@ -12,12 +12,10 @@ pub async fn call(
     payload: Value,
     dry_run: bool,
     pick: Option<&str>,
+    format: OutputFormat,
 ) -> Result<()> {
     if dry_run {
-        output::print_response(
-            &client.dry_run_tool(tool_name, &payload),
-            OutputFormat::Json,
-        )?;
+        output::print_response(&client.dry_run_tool(tool_name, &payload)?, format)?;
         return Ok(());
     }
 
@@ -33,7 +31,7 @@ pub async fn call(
             if let Some(paths) = pick {
                 pick_fields(value, paths)?;
             } else {
-                output::print_response(value, OutputFormat::Json)?;
+                output::print_response(value, format)?;
             }
         }
         Err(ref e) => {
@@ -56,29 +54,13 @@ fn pick_fields(value: &Value, paths: &str) -> Result<()> {
     if paths.contains(',') {
         let resolved: Vec<&Value> = paths
             .split(',')
-            .map(|p| resolve_path(value, p.trim()))
+            .map(|p| super::resolve_path(value, p.trim()))
             .collect::<Result<Vec<_>>>()?;
         output::print_picked_multi(&resolved)
     } else {
-        let picked = resolve_path(value, paths)?;
+        let picked = super::resolve_path(value, paths)?;
         output::print_picked(picked)
     }
-}
-
-/// Walk a dot-separated path through a JSON value.
-fn resolve_path<'a>(value: &'a Value, path: &str) -> Result<&'a Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = if let Ok(idx) = segment.parse::<usize>() {
-            current.get(idx)
-        } else {
-            current.get(segment)
-        }
-        .ok_or_else(|| {
-            CodaError::Validation(format!("Field '{path}' not found (failed at '{segment}')"))
-        })?;
-    }
-    Ok(current)
 }
 
 #[cfg(test)]

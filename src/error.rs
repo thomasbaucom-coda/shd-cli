@@ -27,4 +27,16 @@ pub enum CodaError {
     Other(String),
 }
 
+impl CodaError {
+    pub fn error_type(&self) -> &'static str {
+        match self {
+            CodaError::ContractChanged { .. } => "contract_changed",
+            CodaError::Api { .. } => "api_error",
+            CodaError::Validation(_) => "validation_error",
+            CodaError::NoToken => "auth_required",
+            _ => "error",
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, CodaError>;

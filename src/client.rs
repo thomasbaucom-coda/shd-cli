@@ -23,6 +23,7 @@ impl CodaClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -31,20 +32,25 @@ impl CodaClient {
         })
     }
 
-    /// Call a Coda tool via the direct tool endpoint.
-    /// POST /apis/mcp/vbeta/tool (docless) or /apis/mcp/vbeta/docs/{docId}/tool
-    pub async fn call_tool(&self, tool_name: &str, payload: Value) -> Result<Value> {
-        // Route via docId if present in payload, otherwise use docless endpoint
-        let url = match payload.get("docId").and_then(|v| v.as_str()) {
+    /// Build the tool endpoint URL, validating the docId if present.
+    fn build_tool_url(&self, payload: &Value) -> Result<String> {
+        match payload.get("docId").and_then(|v| v.as_str()) {
             Some(doc_id) if !doc_id.is_empty() => {
-                format!(
+                crate::validate::validate_resource_id(doc_id, "docId")?;
+                Ok(format!(
                     "{}/docs/{}/tool",
                     self.tool_base_url,
                     crate::validate::encode_path_segment(doc_id),
-                )
+                ))
             }
-            _ => format!("{}/tool", self.tool_base_url),
-        };
+            _ => Ok(format!("{}/tool", self.tool_base_url)),
+        }
+    }
+
+    /// Call a Coda tool via the direct tool endpoint.
+    /// POST /apis/mcp/vbeta/tool (docless) or /apis/mcp/vbeta/docs/{docId}/tool
+    pub async fn call_tool(&self, tool_name: &str, payload: Value) -> Result<Value> {
+        let url = self.build_tool_url(&payload)?;
 
         let body = serde_json::json!({
             "toolName": tool_name,
@@ -69,25 +75,16 @@ impl CodaClient {
     }
 
     /// Build a dry-run representation of a tool call.
-    pub fn dry_run_tool(&self, tool_name: &str, payload: &Value) -> Value {
-        let url = match payload.get("docId").and_then(|v| v.as_str()) {
-            Some(doc_id) if !doc_id.is_empty() => {
-                format!(
-                    "{}/docs/{}/tool",
-                    self.tool_base_url,
-                    crate::validate::encode_path_segment(doc_id)
-                )
-            }
-            _ => format!("{}/tool", self.tool_base_url),
-        };
-        serde_json::json!({
+    pub fn dry_run_tool(&self, tool_name: &str, payload: &Value) -> Result<Value> {
+        let url = self.build_tool_url(payload)?;
+        Ok(serde_json::json!({
             "method": "POST",
             "url": url,
             "body": {
                 "toolName": tool_name,
                 "payload": payload,
             }
-        })
+        }))
     }
 
     /// Probe a tool with empty payload to discover its required fields.
@@ -270,16 +267,7 @@ impl CodaClient {
 
     /// Single-page tool call (no auto-pagination). Used internally by auto_paginate.
     async fn call_tool_single(&self, tool_name: &str, payload: Value) -> Result<Value> {
-        let url = match payload.get("docId").and_then(|v| v.as_str()) {
-            Some(doc_id) if !doc_id.is_empty() => {
-                format!(
-                    "{}/docs/{}/tool",
-                    self.tool_base_url,
-                    crate::validate::encode_path_segment(doc_id),
-                )
-            }
-            _ => format!("{}/tool", self.tool_base_url),
-        };
+        let url = self.build_tool_url(&payload)?;
 
         let body = serde_json::json!({
             "toolName": tool_name,

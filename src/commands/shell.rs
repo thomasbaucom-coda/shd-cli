@@ -34,7 +34,7 @@ pub async fn start(client: &CodaClient, dry_run: bool) -> Result<()> {
             Err(e) => json!({
                 "ok": false,
                 "error": {
-                    "type": error_type(&e),
+                    "type": e.error_type(),
                     "message": e.to_string(),
                 }
             }),
@@ -71,7 +71,7 @@ async fn process_line(client: &CodaClient, line: &str, dry_run: bool) -> Result<
     }
 
     if dry_run {
-        return Ok(client.dry_run_tool(tool_name, &payload));
+        return client.dry_run_tool(tool_name, &payload);
     }
 
     trace::emit_request(tool_name, &payload);
@@ -94,35 +94,10 @@ fn pick_from_value(value: &Value, paths: &str) -> Result<Value> {
     if paths.contains(',') {
         let results: Vec<Value> = paths
             .split(',')
-            .map(|p| resolve_path(value, p.trim()).cloned())
+            .map(|p| super::resolve_path(value, p.trim()).cloned())
             .collect::<Result<Vec<_>>>()?;
         Ok(Value::Array(results))
     } else {
-        resolve_path(value, paths).cloned()
-    }
-}
-
-fn resolve_path<'a>(value: &'a Value, path: &str) -> Result<&'a Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = if let Ok(idx) = segment.parse::<usize>() {
-            current.get(idx)
-        } else {
-            current.get(segment)
-        }
-        .ok_or_else(|| {
-            CodaError::Validation(format!("Field '{path}' not found (failed at '{segment}')"))
-        })?;
-    }
-    Ok(current)
-}
-
-fn error_type(e: &CodaError) -> &'static str {
-    match e {
-        CodaError::ContractChanged { .. } => "contract_changed",
-        CodaError::Api { .. } => "api_error",
-        CodaError::Validation(_) => "validation_error",
-        CodaError::NoToken => "auth_required",
-        _ => "error",
+        super::resolve_path(value, paths).cloned()
     }
 }
