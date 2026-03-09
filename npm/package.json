@@ -7,22 +7,17 @@
     "type": "git",
     "url": "https://github.com/thomasbaucom-coda/shd-cli.git"
   },
-  "private": true,
   "bin": {
     "coda": "bin/coda"
   },
+  "files": [
+    "bin/coda",
+    "bin/coda-native*",
+    "install.js"
+  ],
   "scripts": {
     "postinstall": "node install.js"
   },
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
-  ],
   "engines": {
     "node": ">=18"
   },
