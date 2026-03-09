@@ -82,20 +82,20 @@ jobs:
           body: |
             ## Install
 
-            Pick the right tarball for your platform and install globally:
+            Requires the [GitHub CLI](https://cli.github.com/) (`gh`) since this is a private repo.
 
             ```bash
             # macOS Apple Silicon (M1/M2/M3/M4)
-            npm install -g https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/shd-darwin-arm64.tgz
+            gh release download ${{ github.ref_name }} -R ${{ github.repository }} -p 'shd-darwin-arm64.tgz' -D /tmp --clobber && npm install -g /tmp/shd-darwin-arm64.tgz
 
             # macOS Intel
-            npm install -g https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/shd-darwin-x64.tgz
+            gh release download ${{ github.ref_name }} -R ${{ github.repository }} -p 'shd-darwin-x64.tgz' -D /tmp --clobber && npm install -g /tmp/shd-darwin-x64.tgz
 
             # Linux x64
-            npm install -g https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/shd-linux-x64.tgz
+            gh release download ${{ github.ref_name }} -R ${{ github.repository }} -p 'shd-linux-x64.tgz' -D /tmp --clobber && npm install -g /tmp/shd-linux-x64.tgz
 
             # Linux ARM64
-            npm install -g https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/shd-linux-arm64.tgz
+            gh release download ${{ github.ref_name }} -R ${{ github.repository }} -p 'shd-linux-arm64.tgz' -D /tmp --clobber && npm install -g /tmp/shd-linux-arm64.tgz
             ```
 
             Then authenticate:
