@@ -78,7 +78,7 @@ fn read_stored_token() -> Result<Option<String>> {
 fn credential_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| CodaError::Other("Could not determine config directory".into()))?;
-    Ok(config_dir.join("coda").join("credentials"))
+    Ok(config_dir.join("shd").join("credentials"))
 }
 
 /// Returns the path where credentials are stored (for display purposes).

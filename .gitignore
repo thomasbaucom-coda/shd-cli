@@ -3,7 +3,7 @@
 *.swp
 *.swo
 .DS_Store
-npm/bin/coda-native*
+npm/bin/shd-native*
 npm/node_modules
 test_build_doc.py
 build_competitive_intel.py

@@ -8,11 +8,11 @@
     "url": "https://github.com/thomasbaucom-coda/shd-cli.git"
   },
   "bin": {
-    "coda": "bin/coda"
+    "shd": "bin/shd"
   },
   "files": [
-    "bin/coda",
-    "bin/coda-native*",
+    "bin/shd",
+    "bin/shd-native*",
     "install.js"
   ],
   "scripts": {

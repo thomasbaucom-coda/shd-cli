@@ -300,7 +300,7 @@ impl CodaClient {
                     return CodaError::ContractChanged {
                         tool: tool_name.to_string(),
                         message: format!(
-                            "Tool '{}' not found. It may have been renamed or removed. Run `coda discover` to see available tools.",
+                            "Tool '{}' not found. It may have been renamed or removed. Run `shd discover` to see available tools.",
                             tool_name
                         ),
                     };
@@ -331,7 +331,7 @@ impl CodaClient {
                 return CodaError::ContractChanged {
                     tool: tool_name.to_string(),
                     message: format!(
-                        "Validation error for '{}':\n{}\nRun `coda discover {}` to see current schema.",
+                        "Validation error for '{}':\n{}\nRun `shd discover {}` to see current schema.",
                         tool_name,
                         field_errors.join("\n"),
                         tool_name,

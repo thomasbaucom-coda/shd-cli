@@ -74,7 +74,7 @@ pub fn resolve(query: &str, tools: &[Value]) -> Result<String> {
 
     if matches.is_empty() {
         return Err(CodaError::Validation(format!(
-            "No tools matching '{query}'. Run `coda discover` to see available tools."
+            "No tools matching '{query}'. Run `shd discover` to see available tools."
         )));
     }
 
@@ -106,7 +106,7 @@ pub fn resolve(query: &str, tools: &[Value]) -> Result<String> {
     }
 
     Err(CodaError::Validation(format!(
-        "Ambiguous tool query '{query}'. Use a more specific name or run `coda discover`."
+        "Ambiguous tool query '{query}'. Use a more specific name or run `shd discover`."
     )))
 }
 

@@ -15,7 +15,7 @@ pub struct CachedTools {
 pub fn cache_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| CodaError::Other("Could not determine config directory".into()))?;
-    Ok(config_dir.join("coda").join("tool_cache.json"))
+    Ok(config_dir.join("shd").join("tool_cache.json"))
 }
 
 pub fn load() -> Result<Option<CachedTools>> {

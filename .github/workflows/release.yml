@@ -48,8 +48,8 @@ jobs:
       - name: Package npm tarball
         run: |
           # Copy the built binary into the npm package
-          cp target/${{ matrix.target }}/release/coda npm/bin/coda-native
-          chmod +x npm/bin/coda-native
+          cp target/${{ matrix.target }}/release/shd npm/bin/shd-native
+          chmod +x npm/bin/shd-native
 
           # Create the tarball from the npm directory
           cd npm
@@ -101,5 +101,5 @@ jobs:
             Then authenticate:
 
             ```bash
-            coda auth login
+            shd auth login
             ```

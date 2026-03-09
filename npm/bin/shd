@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Thin wrapper that finds and executes the native coda binary.
+ * Thin wrapper that finds and executes the native shd binary.
  * Passes all arguments through unchanged.
  */
 
@@ -11,7 +11,7 @@ const os = require("os");
 const fs = require("fs");
 
 const EXT = os.platform() === "win32" ? ".exe" : "";
-const NATIVE = path.join(__dirname, `coda-native${EXT}`);
+const NATIVE = path.join(__dirname, `shd-native${EXT}`);
 
 if (!fs.existsSync(NATIVE)) {
   console.error(

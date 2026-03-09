@@ -12,7 +12,7 @@ keywords = ["cli", "coda", "docs", "ai-agent", "automation"]
 categories = ["command-line-utilities", "web-programming"]
 
 [[bin]]
-name = "coda"
+name = "shd"
 path = "src/main.rs"
 
 [dependencies]

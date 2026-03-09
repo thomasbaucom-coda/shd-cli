@@ -4,7 +4,7 @@
  * Post-install script for shd-cli npm package.
  *
  * Checks for a pre-built native binary, and if missing, builds from source
- * using cargo. For distribution, place pre-built binaries at bin/coda-native.
+ * using cargo. For distribution, place pre-built binaries at bin/shd-native.
  */
 
 const { execSync } = require("child_process");
@@ -14,7 +14,7 @@ const os = require("os");
 
 const BIN_DIR = path.join(__dirname, "bin");
 const EXT = os.platform() === "win32" ? ".exe" : "";
-const NATIVE_NAME = `coda-native${EXT}`;
+const NATIVE_NAME = `shd-native${EXT}`;
 const NATIVE_PATH = path.join(BIN_DIR, NATIVE_NAME);
 
 // If native binary already exists (pre-built distribution), done
@@ -33,7 +33,7 @@ const CARGO_TOML = path.join(ROOT, "Cargo.toml");
 if (!fs.existsSync(CARGO_TOML)) {
   console.error(
     "[shd-cli] No pre-built binary and no Cargo.toml found.\n" +
-    "Either place a binary at npm/bin/coda-native or install from the repo root."
+    "Either place a binary at npm/bin/shd-native or install from the repo root."
   );
   process.exit(1);
 }
@@ -46,7 +46,7 @@ try {
     stdio: "inherit",
   });
 
-  const CARGO_BINARY = os.platform() === "win32" ? "coda.exe" : "coda";
+  const CARGO_BINARY = os.platform() === "win32" ? "shd.exe" : "shd";
   const builtBinary = path.join(ROOT, "target", "release", CARGO_BINARY);
 
   if (!fs.existsSync(builtBinary)) {

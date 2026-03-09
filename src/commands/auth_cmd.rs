@@ -66,7 +66,7 @@ pub async fn login(token: Option<&str>) -> Result<()> {
 
     if token.is_empty() {
         return Err(crate::error::CodaError::Validation(
-            "Token cannot be empty. Run `coda auth login` to try again.".into(),
+            "Token cannot be empty. Run `shd auth login` to try again.".into(),
         ));
     }
 
@@ -103,7 +103,7 @@ pub fn status() -> Result<()> {
             Ok(())
         }
         Err(_) => {
-            println!("Not authenticated. Run `coda auth login` or set CODA_API_TOKEN.");
+            println!("Not authenticated. Run `shd auth login` or set CODA_API_TOKEN.");
             Ok(())
         }
     }

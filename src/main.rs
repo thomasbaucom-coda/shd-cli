@@ -27,21 +27,21 @@ const BANNER: &str = r#"
 
 #[derive(Parser)]
 #[command(
-    name = "coda",
+    name = "shd",
     version,
     about = "Superhuman Docs CLI — agent-first interface for Coda",
     before_help = BANNER,
     long_about = "All commands call the Coda tool endpoint dynamically.\n\
                   Tools are discovered at runtime — new tools work without a CLI rebuild.\n\
-                  Run `coda discover` to see available tools and their schemas.\n\n\
-                  Auth: set CODA_API_TOKEN or run `coda auth login`.",
+                  Run `shd discover` to see available tools and their schemas.\n\n\
+                  Auth: set CODA_API_TOKEN or run `shd auth login`.",
     after_help = "TOOL USAGE:\n  \
-                  coda <tool_name> --json '{...}'                    Call any tool\n  \
-                  coda table_create --json '{\"docId\":\"...\",\"canvasId\":\"...\",\"name\":\"...\",\"columns\":[...]}'\n  \
-                  coda whoami                                        No payload needed\n  \
-                  coda discover                                      List all tools\n  \
-                  coda discover table_create                         Show tool schema\n  \
-                  echo '{...}' | coda table_add_rows --json -        Read payload from stdin"
+                  shd <tool_name> --json '{...}'                    Call any tool\n  \
+                  shd table_create --json '{\"docId\":\"...\",\"canvasId\":\"...\",\"name\":\"...\",\"columns\":[...]}'\n  \
+                  shd whoami                                        No payload needed\n  \
+                  shd discover                                      List all tools\n  \
+                  shd discover table_create                         Show tool schema\n  \
+                  echo '{...}' | shd table_add_rows --json -        Read payload from stdin"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -202,7 +202,7 @@ async fn dispatch_tool(
 ) -> error::Result<()> {
     if args.is_empty() {
         return Err(error::CodaError::Validation(
-            "Usage: coda <tool_name> [--json '{...}']\nRun `coda discover` to see available tools."
+            "Usage: shd <tool_name> [--json '{...}']\nRun `shd discover` to see available tools."
                 .into(),
         ));
     }

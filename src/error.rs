@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CodaError {
-    #[error("Authentication required. Run `coda auth login` or set CODA_API_TOKEN.")]
+    #[error("Authentication required. Run `shd auth login` or set CODA_API_TOKEN.")]
     NoToken,
 
     #[error("API error ({status}): {message}")]
