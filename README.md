@@ -1,6 +1,8 @@
 # shd-cli
 
-Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. Inspired by [Google's Workspace CLI](https://github.com/googleworkspace/cli) and [Justin Poehnelt's CLI-for-agents guidance](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/).
+Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. All commands are dispatched dynamically to Coda's MCP tool endpoint — new tools work without a CLI rebuild.
+
+Inspired by [Google's Workspace CLI](https://github.com/googleworkspace/cli) and [Justin Poehnelt's CLI-for-agents guidance](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/).
 
 ## Install
 
@@ -8,11 +10,11 @@ Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. I
 # Option 1: npm (builds from source automatically)
 cd shd-cli
 npm install
-# Binary available at npm/bin/coda
+# Binary available at npm/bin/shd
 
 # Option 2: Cargo directly
 cargo build --release
-# Binary at target/release/coda
+# Binary at target/release/shd
 
 # Option 3: Cargo install (adds to PATH)
 cargo install --path .
@@ -25,78 +27,58 @@ cargo install --path .
 export CODA_API_TOKEN="your-token"
 
 # Option 2: Interactive login (stored in ~/.config/coda/credentials)
-coda auth login
+shd auth login
 
-# For internal tool commands (table create, content write, etc.)
-# you need an MCP-scoped token from:
+# Generate an MCP-scoped token at:
 # https://coda.io/account?openDialog=CREATE_API_TOKEN&scopeType=mcp#apiSettings
 ```
 
 ## Quick Start
 
 ```bash
-# List your docs
-coda docs list --limit 5
+# Discover available tools
+shd discover
 
-# Get a doc
-coda docs get <docId>
+# Inspect a specific tool's schema
+shd discover table_create
 
-# List tables and rows
-coda tables list <docId>
-coda rows list <docId> <tableId> --fields "Name,Status" --limit 10
+# Call any tool by name
+shd whoami
+shd document_list --json '{"limit": 5}'
+shd table_list --json '{"docId": "<docId>"}'
 
 # Create a doc
-coda docs create --title "My Project"
+shd document_create --json '{"title": "My Project"}'
 
-# Upsert rows
-coda rows upsert <docId> <tableId> --json '{
-  "rows": [{"cells": [{"column": "Name", "value": "Alice"}]}]
-}'
+# Add rows to a table
+shd table_add_rows --json '{"docId": "<docId>", "tableId": "<tableId>", "rows": [...]}'
 
-# Bulk import from stdin (auto-batched)
-cat data.ndjson | coda rows import <docId> <tableId>
+# Read payload from stdin
+echo '{"docId": "abc123"}' | shd table_list --json -
 
-# Schema introspection (no network call, 13ms)
-coda schema rows.list
+# Extract a specific field from the response
+shd whoami --pick name
+
+# Fuzzy-match a tool name against cached tools
+shd tbl_create --fuzzy --json '{...}'
+
+# Preview request without executing (works without auth)
+shd document_create --json '{"title": "Test"}' --dry-run
 ```
 
 ## Commands
 
-### Public API
+The CLI has only 4 built-in commands. Everything else is a dynamically dispatched tool call.
 
 | Command | Description |
 |---------|-------------|
 | `auth login\|status\|logout` | Manage authentication |
-| `whoami` | Current user info |
-| `docs list\|get\|create\|delete` | Manage docs |
-| `pages list\|get\|create\|update\|delete\|content` | Manage pages |
-| `tables list\|get` | List and inspect tables |
-| `columns list\|get` | List and inspect columns |
-| `rows list\|get\|upsert\|update\|delete\|push-button\|import` | Full row CRUD + bulk import |
-| `formulas list\|get` | List and inspect formulas |
-| `controls list\|get` | List and inspect controls |
-| `folders list\|get\|create\|delete` | Manage folders |
-| `permissions list\|metadata\|add\|remove` | Manage doc sharing |
-| `resolve-url` | Decode a Coda URL to resource IDs |
-| `schema` | Inspect API schema (offline) |
-| `mcp` | Start MCP server over stdio |
+| `discover [tool_name]` | List all tools or inspect a specific tool's schema |
+| `mcp` | Start an MCP server over stdio (JSON-RPC) |
+| `shell` | Start a persistent JSON-line REPL for agents |
+| `<tool_name> [--json '{...}']` | Call any Coda tool dynamically |
 
-### Internal Tool API (requires MCP-scoped token)
-
-| Command | Description |
-|---------|-------------|
-| `tool table-create` | Create a table with typed columns |
-| `tool table-add-rows` | Add rows (bulk, typed) |
-| `tool table-add-columns` | Add columns to a table |
-| `tool table-delete-rows` | Delete rows |
-| `tool table-update-rows` | Update rows |
-| `tool import-rows` | Bulk import from stdin (100/batch) |
-| `tool content-modify` | Write page content (markdown, callouts, code blocks) |
-| `tool comment-manage` | Add, reply to, delete comments |
-| `tool formula-create` | Create a named formula |
-| `tool formula-execute` | Evaluate a CFL expression |
-| `tool view-configure` | Configure view filters and layout |
-| `tool raw` | Call any internal tool by name |
+Run `shd discover` to see the full list of available tools and their schemas. Tools are fetched from Coda's MCP endpoint and cached locally.
 
 ## Global Flags
 
@@ -105,18 +87,24 @@ coda schema rows.list
 | `--output json\|table\|ndjson` | Output format (default: `json`) |
 | `--dry-run` | Preview request without executing |
 | `--token <TOKEN>` | Override the stored token |
-| `--page-all` | Auto-paginate, stream as NDJSON (on `docs list`, `rows list`) |
-| `--fields "Col1,Col2"` | Limit row output to specific columns |
+| `--pick <field>` | Extract a specific field from the response (dot-path, e.g. `name` or `items.0.id`) |
+| `--fuzzy` | Resolve tool name via fuzzy matching against cached tools |
+| `--sanitize` | Redact prompt injection patterns in API responses |
+| `--trace` | Emit NDJSON execution traces to stderr |
+| `--quiet` | Suppress informational stderr messages |
 
 ## Agent Design Principles
 
 This CLI follows the [agent-first CLI design](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/) principles:
 
-- **Raw JSON payloads** — every mutation accepts `--json` for the full API body, plus `--json -` to read from stdin
-- **Schema introspection** — `coda schema rows.list` returns params, types, and response schemas from the embedded OpenAPI spec. No network call, 13ms.
-- **Context window discipline** — `--fields` limits row columns, `--page-all` streams NDJSON instead of buffering, `--limit` caps results
+- **Fully dynamic** — no hardcoded tool commands. Tools are discovered at runtime from Coda's MCP endpoint and cached locally. New tools work without a CLI rebuild.
+- **Raw JSON payloads** — every tool call accepts `--json` for the full API body, plus `--json -` to read from stdin
+- **Schema introspection** — `shd discover <tool>` returns the tool's input schema. Cached locally after first fetch.
+- **Fuzzy matching** — `--fuzzy` resolves typos and partial tool names against the cached tool list
+- **Field extraction** — `--pick name` extracts a single field from the response, keeping agent context windows small
 - **Input hardening** — rejects path traversal (`../`), control characters, query injection (`?`, `#`), percent-encoding bypasses (`%2e`)
-- **Dry-run safety** — `--dry-run` on every mutation shows the exact HTTP request without sending it. Works without auth.
+- **Client-side validation** — payloads are validated against cached tool schemas before sending
+- **Dry-run safety** — `--dry-run` on every tool call shows the exact HTTP request without sending it. Works without auth.
 - **Structured errors** — all errors are JSON on stderr with exit code 1
 - **Agent skill files** — 12 skill files in `skills/` encoding invariants agents can't intuit
 
@@ -124,43 +112,23 @@ This CLI follows the [agent-first CLI design](https://justin.poehnelt.com/posts/
 
 ```
 src/
-  main.rs          CLI definition (clap) and command dispatch
-  client.rs        HTTP client for both public API and internal tool endpoint
-  auth.rs          Token resolution (flag > env > credential file)
-  validate.rs      Input validation + JSON stdin support
-  output.rs        json | table | ndjson formatters
-  paginate.rs      Auto-pagination with field filtering
-  error.rs         Structured error types
+  main.rs            CLI definition (clap), command dispatch, dynamic tool routing
+  client.rs          CodaClient: call_tool(), dry_run_tool(), fetch_tools() (SSE parsing)
+  auth.rs            Token resolution: --token flag > CODA_API_TOKEN env > ~/.config/coda/credentials
+  validate.rs        Input validation (resource IDs, JSON payloads, stdin support)
+  sanitize.rs        Prompt injection detection/redaction (--sanitize flag)
+  output.rs          Output formatting: json (pretty), table (comfy-table), ndjson
+  error.rs           CodaError enum with ContractChanged variant for schema mismatches
+  fuzzy.rs           Fuzzy tool name resolution against cached tools
+  schema_cache.rs    Local tool schema cache + client-side payload validation
+  trace.rs           NDJSON execution tracing to stderr
   commands/
-    docs.rs        Public API: docs CRUD
-    pages.rs       Public API: pages CRUD
-    tables.rs      Public API: table reads
-    columns.rs     Public API: column reads
-    rows.rs        Public API: row CRUD + bulk import
-    formulas.rs    Public API: formula reads
-    controls.rs    Public API: control reads
-    folders.rs     Public API: folder CRUD
-    permissions.rs Public API: ACL management
-    tools.rs       Internal tool endpoint: tables, content, comments, formulas, views
-    mcp.rs         MCP server (stdio JSON-RPC, 24 tools)
-    schema.rs      OpenAPI schema introspection
-    resolve_url.rs URL-to-ID decoder
-    whoami.rs      Current user info
-    auth_cmd.rs    Auth management CLI
+    tools.rs         Core call() function for dynamic tool dispatch
+    mcp.rs           MCP server over stdio (JSON-RPC), dynamically loads tools
+    discover.rs      Lists/inspects tools fetched from the MCP endpoint
+    shell.rs         Persistent JSON-line REPL for agents
+    auth_cmd.rs      login, status, logout subcommands
 ```
-
-## Two API Surfaces
-
-The CLI uses two Coda API surfaces:
-
-| Surface | Endpoint | Token | Capabilities |
-|---------|----------|-------|-------------|
-| **Public API** | `/apis/v1/` | Standard API token | Docs, pages, rows (CRUD/upsert), columns (read), formulas (read), folders, permissions |
-| **Internal Tool API** | `/apis/mcp/vbeta/docs/{docId}/tool` | MCP-scoped token | Table creation, column management, content writing, comments, formula creation, view configuration |
-
-The public API can't create tables or write page content. The internal tool API can do everything but requires an MCP-scoped token (generate at coda.io/account with MCP scope).
-
-**Token scopes are not yet unified** — an MCP-scoped token can't call the public API, and a standard token can't call the tool endpoint. This is a known limitation being addressed on the Coda side.
 
 ## Skills
 
@@ -185,30 +153,30 @@ The `skills/` directory contains agent skill files (markdown with YAML frontmatt
 
 ```bash
 # Create doc
-DOC=$(coda docs create --title "Q2 Planning" | jq -r '.id')
-sleep 3
+DOC=$(shd document_create --json '{"title": "Q2 Planning"}' --pick id)
 
-# Create pages
-coda pages create "$DOC" --name "Tasks"
-TASKS_PAGE=$(coda pages list "$DOC" | jq -r '.items[-1].id')
-
-# Create table with typed columns (MCP token required)
-RESULT=$(coda tool table-create "$DOC" "$TASKS_PAGE" \
-  --name "Tasks" \
-  --columns '[
-    {"name":"Task","isDisplayColumn":true},
-    {"name":"Status","format":{"type":"sl","selectOptions":["To Do","In Progress","Done"]}},
-    {"name":"Priority","format":{"type":"sl","selectOptions":["Low","Medium","High"]}},
-    {"name":"Due","format":{"type":"dp"}}
-  ]')
+# Create a table with typed columns
+RESULT=$(shd table_create --json "{
+  \"docId\": \"$DOC\",
+  \"canvasId\": \"canvas-$DOC\",
+  \"name\": \"Tasks\",
+  \"columns\": [
+    {\"name\":\"Task\",\"isDisplayColumn\":true},
+    {\"name\":\"Status\",\"format\":{\"type\":\"sl\",\"selectOptions\":[\"To Do\",\"In Progress\",\"Done\"]}},
+    {\"name\":\"Priority\",\"format\":{\"type\":\"sl\",\"selectOptions\":[\"Low\",\"Medium\",\"High\"]}},
+    {\"name\":\"Due\",\"format\":{\"type\":\"dp\"}}
+  ]
+}")
 TABLE=$(echo "$RESULT" | jq -r '.tableId')
-COLS=$(echo "$RESULT" | jq -r '[.columns[].columnId] | @json')
 
-# Import 100 rows from a script
-python3 generate_tasks.py | coda tool import-rows "$DOC" "$TABLE" --columns "$COLS"
-
-# Configure a filtered view
-coda tool view-configure "$DOC" "$TABLE" --name "Active" --filter 'Status != "Done"'
+# Add rows
+shd table_add_rows --json "{
+  \"docId\": \"$DOC\",
+  \"tableId\": \"$TABLE\",
+  \"rows\": [
+    {\"cells\": [{\"column\": \"Task\", \"value\": \"Design review\"}, {\"column\": \"Status\", \"value\": \"To Do\"}]}
+  ]
+}"
 ```
 
 ## Stats
@@ -216,13 +184,11 @@ coda tool view-configure "$DOC" "$TABLE" --name "Active" --filter 'Status != "Do
 | Metric | Value |
 |--------|-------|
 | Language | Rust |
-| Binary size | 6.7MB |
 | Cold startup | ~13ms |
-| Rust LOC | ~4,000 |
-| CLI commands | 16 top-level + 12 tool subcommands |
-| MCP tools | 24 |
+| Rust LOC | ~2,500 |
+| Built-in commands | 4 (`auth`, `discover`, `mcp`, `shell`) |
+| Dynamic tools | All Coda MCP tools (discovered at runtime) |
 | Agent skills | 12 |
-| Dependencies | 0 runtime (static binary) |
 
 ## License
 
