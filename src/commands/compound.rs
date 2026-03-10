@@ -481,42 +481,25 @@ async fn doc_summarize(client: &CodaClient, payload: Value) -> Result<Value> {
             continue;
         }
 
-        let read_payload = json!({"uri": read_uri});
+        let read_payload = json!({
+            "uri": read_uri,
+            "contentTypesToInclude": ["markdown", "tables"],
+            "markdownBlockLimit": 3
+        });
         trace::emit_compound_step("doc_summarize", step, "page_read", &read_payload);
         step += 1;
 
         match client.call_tool("page_read", read_payload).await {
             Ok(page_data) => {
-                // Extract content preview
-                let content_preview = page_data
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .map(|s| {
-                        if s.len() > 200 {
-                            format!("{}...", &s[..197])
-                        } else {
-                            s.to_string()
-                        }
-                    })
-                    .or_else(|| {
-                        // Try extracting from elements array
-                        page_data
-                            .get("elements")
-                            .and_then(|e| e.as_array())
-                            .map(|elems| {
-                                let texts: Vec<&str> = elems
-                                    .iter()
-                                    .take(3)
-                                    .filter_map(|e| e.get("content").and_then(|c| c.as_str()))
-                                    .collect();
-                                let joined = texts.join(" | ");
-                                if joined.len() > 200 {
-                                    format!("{}...", &joined[..197])
-                                } else {
-                                    joined
-                                }
-                            })
-                    });
+                // Extract content preview — truncate to first 200 chars
+                let content_preview = page_data.get("content").and_then(|c| c.as_str()).map(|s| {
+                    let trimmed = s.trim();
+                    if trimmed.len() > 200 {
+                        format!("{}...", &trimmed[..197])
+                    } else {
+                        trimmed.to_string()
+                    }
+                });
 
                 // Find tables on this page
                 let child_tables = page_data
@@ -527,7 +510,7 @@ async fn doc_summarize(client: &CodaClient, payload: Value) -> Result<Value> {
 
                 for table in &child_tables {
                     let tbl_name = table.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                    let tbl_uri = table.get("tableUri").and_then(|v| v.as_str());
+                    let tbl_uri = table.get("tableUri").and_then(|v| v.as_str()).unwrap_or("");
                     let col_names: Vec<&str> = table
                         .get("columns")
                         .and_then(|c| c.as_array())
@@ -548,11 +531,12 @@ async fn doc_summarize(client: &CodaClient, payload: Value) -> Result<Value> {
                     }));
                 }
 
+                let table_count = child_tables.len();
                 page_summaries.push(json!({
                     "title": page_title,
                     "canvasUri": canvas_uri,
                     "contentPreview": content_preview,
-                    "tables": child_tables.len(),
+                    "tables": table_count,
                 }));
             }
             Err(_) => {
