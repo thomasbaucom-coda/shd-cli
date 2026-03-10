@@ -38,21 +38,20 @@ pub async fn login(token: Option<&str>) -> Result<()> {
         Some(t) => t.to_string(),
         None => {
             eprintln!();
-            eprintln!("  To get your API token:");
-            eprintln!("  1. Go to {TOKEN_URL}");
+            eprintln!("  Generate an API token (MCP-scoped for full access):");
+            eprintln!();
+            eprintln!("  1. Your browser will open to Coda's token page");
             eprintln!("  2. Click \"Generate API token\"");
             eprintln!("  3. Copy the token and paste it below");
             eprintln!();
-            eprintln!("  For internal tool commands (table create, content write, etc.),");
-            eprintln!("  generate an MCP-scoped token instead:");
-            eprintln!("  {MCP_TOKEN_URL}");
-            eprintln!();
 
-            // Try to open the browser automatically
-            if open_browser(TOKEN_URL) {
-                eprintln!("  (Opening your browser...)");
-                eprintln!();
+            // Open the MCP-scoped token page directly
+            if open_browser(MCP_TOKEN_URL) {
+                eprintln!("  Opening {MCP_TOKEN_URL}");
+            } else {
+                eprintln!("  Go to: {MCP_TOKEN_URL}");
             }
+            eprintln!();
 
             eprint!("  Paste your token: ");
             let mut input = String::new();
