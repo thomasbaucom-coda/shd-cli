@@ -1,194 +1,175 @@
-# shd-cli
+# shd — Superhuman Docs CLI
 
-Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. All commands are dispatched dynamically to Coda's MCP tool endpoint — new tools work without a CLI rebuild.
-
-Inspired by [Google's Workspace CLI](https://github.com/googleworkspace/cli) and [Justin Poehnelt's CLI-for-agents guidance](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/).
+Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. All commands dispatch dynamically to Coda's MCP tool endpoint — new tools work without a CLI rebuild.
 
 ## Install
 
 ```bash
-# Option 1: npm (builds from source automatically)
-cd shd-cli
-npm install
-# Binary available at npm/bin/shd
+curl -fsSL https://raw.githubusercontent.com/thomasbaucom-coda/shd-cli/main/install.sh | bash
+```
 
-# Option 2: Cargo directly
+Requires the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated with repo access. No Rust or npm needed — downloads a pre-built binary.
+
+<details>
+<summary>Alternative: build from source</summary>
+
+```bash
 cargo build --release
 # Binary at target/release/shd
 
-# Option 3: Cargo install (adds to PATH)
 cargo install --path .
+# Adds to PATH
 ```
+</details>
 
-## Authentication
+## Authenticate
 
 ```bash
-# Option 1: Environment variable (preferred for agents)
-export CODA_API_TOKEN="your-token"
-
-# Option 2: Interactive login (stored in ~/.config/coda/credentials)
 shd auth login
+```
 
-# Generate an MCP-scoped token at:
-# https://coda.io/account?openDialog=CREATE_API_TOKEN&scopeType=mcp#apiSettings
+Opens your browser to generate an MCP-scoped API token. Paste it when prompted.
+
+Or set it directly:
+```bash
+export CODA_API_TOKEN="your-token"
 ```
 
 ## Quick Start
 
 ```bash
+# Check your connection
+shd whoami
+
 # Discover available tools
 shd discover
 
-# Inspect a specific tool's schema
-shd discover table_create
+# Compact schema (agent-friendly, 5 lines instead of 300)
+shd discover content_modify --compact
 
-# Call any tool by name
-shd whoami
-shd document_list --json '{"limit": 5}'
-shd table_list --json '{"docId": "<docId>"}'
+# Build a complete doc in one call
+shd doc_scaffold --json @blueprint.json
 
-# Create a doc
-shd document_create --json '{"title": "My Project"}'
+# Create a page with content
+shd page_create_with_content --json '{
+  "uri": "coda://docs/DOC_ID",
+  "title": "My Page",
+  "content": "# Hello\n\nMarkdown content here."
+}'
 
-# Add rows to a table
-shd table_add_rows --json '{"docId": "<docId>", "tableId": "<tableId>", "rows": [...]}'
+# Summarize an existing doc
+shd doc_summarize --json '{"uri": "coda://docs/DOC_ID"}'
 
-# Read payload from stdin
-echo '{"docId": "abc123"}' | shd table_list --json -
-
-# Extract a specific field from the response
+# Extract specific fields from responses
 shd whoami --pick name
+shd page_create --json '{...}' --pick canvasUri,pageUri
+# Returns: {"canvasUri": "...", "pageUri": "..."}
+```
 
-# Fuzzy-match a tool name against cached tools
-shd tbl_create --fuzzy --json '{...}'
+## Compound Operations
 
-# Preview request without executing (works without auth)
-shd document_create --json '{"title": "Test"}' --dry-run
+These compose multiple API calls into single CLI invocations — fewer calls, no URI chaining, no sleeps.
+
+| Tool | What it does | Calls saved |
+|------|-------------|-------------|
+| `doc_scaffold` | Build complete doc from JSON blueprint (pages, content, tables, rows) | ~32 → 1 |
+| `page_create_with_content` | Create page + insert markdown | 2 → 1 |
+| `doc_summarize` | Condensed doc overview (pages, content previews, tables, row counts) | ~10 → 1 |
+| `table_search` | Filter table rows by column value (eq/ne/contains) | 1 → 1 (filtered) |
+
+### doc_scaffold
+
+```bash
+cat > blueprint.json << 'EOF'
+{
+  "title": "Sprint Planning",
+  "pages": [
+    {"title": "Goals", "content": "# Sprint Goals\n\n- Ship feature X\n- Fix bug Y"},
+    {"title": "Tasks", "content": "# Task Board", "tables": [{
+      "name": "Tasks",
+      "columns": [{"name": "Task"}, {"name": "Status"}, {"name": "Owner"}],
+      "rows": [
+        ["Design review", "Done", "Alice"],
+        ["Backend API", "In Progress", "Bob"],
+        ["Write tests", "To Do", "Carol"]
+      ]
+    }]}
+  ]
+}
+EOF
+
+shd doc_scaffold --json @blueprint.json
 ```
 
 ## Commands
 
-The CLI has only 4 built-in commands. Everything else is a dynamically dispatched tool call.
+4 built-in commands + 4 compound operations. Everything else is a dynamically dispatched tool call.
 
 | Command | Description |
 |---------|-------------|
 | `auth login\|status\|logout` | Manage authentication |
-| `discover [tool_name]` | List all tools or inspect a specific tool's schema |
-| `mcp` | Start an MCP server over stdio (JSON-RPC) |
-| `shell` | Start a persistent JSON-line REPL for agents |
+| `discover [tool] [--compact] [--filter X]` | List tools or inspect schemas |
+| `mcp` | Start MCP server over stdio (JSON-RPC) |
+| `shell` | Persistent JSON-line REPL for agents |
+| `doc_scaffold` | Build complete doc from blueprint |
+| `page_create_with_content` | Create page with markdown content |
+| `doc_summarize` | Condensed doc overview |
+| `table_search` | Filter table rows by column value |
 | `<tool_name> [--json '{...}']` | Call any Coda tool dynamically |
-
-Run `shd discover` to see the full list of available tools and their schemas. Tools are fetched from Coda's MCP endpoint and cached locally.
 
 ## Global Flags
 
 | Flag | Description |
 |------|-------------|
-| `--output json\|table\|ndjson` | Output format (default: `json`) |
+| `--pick <field>` | Extract field(s) from response. Multi: `--pick a,b` returns JSON object |
+| `--json @file.json` | Read payload from file (no shell escaping) |
+| `--json -` | Read payload from stdin |
 | `--dry-run` | Preview request without executing |
-| `--token <TOKEN>` | Override the stored token |
-| `--pick <field>` | Extract a specific field from the response (dot-path, e.g. `name` or `items.0.id`) |
-| `--fuzzy` | Resolve tool name via fuzzy matching against cached tools |
-| `--sanitize` | Redact prompt injection patterns in API responses |
+| `--compact` | Compact schema view (with `discover`) |
+| `--fuzzy` | Fuzzy-match tool names |
 | `--trace` | Emit NDJSON execution traces to stderr |
-| `--quiet` | Suppress informational stderr messages |
+| `--output json\|table\|ndjson` | Output format (default: `json`) |
+| `--sanitize` | Redact prompt injection patterns in responses |
+| `--quiet` | Suppress informational messages |
+| `--token <TOKEN>` | Override stored token |
 
-## Agent Design Principles
+## Agent Design
 
-This CLI follows the [agent-first CLI design](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/) principles:
+Built for AI agents following [agent-first CLI design](https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/) principles:
 
-- **Fully dynamic** — no hardcoded tool commands. Tools are discovered at runtime from Coda's MCP endpoint and cached locally. New tools work without a CLI rebuild.
-- **Raw JSON payloads** — every tool call accepts `--json` for the full API body, plus `--json -` to read from stdin
-- **Schema introspection** — `shd discover <tool>` returns the tool's input schema. Cached locally after first fetch.
-- **Fuzzy matching** — `--fuzzy` resolves typos and partial tool names against the cached tool list
-- **Field extraction** — `--pick name` extracts a single field from the response, keeping agent context windows small
-- **Input hardening** — rejects path traversal (`../`), control characters, query injection (`?`, `#`), percent-encoding bypasses (`%2e`)
-- **Client-side validation** — payloads are validated against cached tool schemas before sending
-- **Dry-run safety** — `--dry-run` on every tool call shows the exact HTTP request without sending it. Works without auth.
-- **Structured errors** — all errors are JSON on stderr with exit code 1
-- **Agent skill files** — 12 skill files in `skills/` encoding invariants agents can't intuit
+- **Fully dynamic** — tools discovered at runtime from Coda's MCP endpoint, cached locally
+- **`--pick` reduces tokens** — extract only needed fields, multi-pick returns JSON objects
+- **`--json @file`** — eliminates shell escaping issues for large payloads
+- **`discover --compact`** — 5-line schema view instead of 300-line JSON dump
+- **Compound operations** — `doc_scaffold` replaces ~32 chained calls with 1
+- **Error hints** — pick errors show available fields; error-as-success responses detected
+- **Client-side validation** — payloads validated against cached schemas before sending
+- **Structured errors** — JSON on stderr, exit code 1, agent-friendly error types
+- **Dry-run** — `--dry-run` previews requests without auth
+- **12 skill files** in `skills/` teach agents CLI patterns and safety rules
 
 ## Architecture
 
 ```
 src/
-  main.rs            CLI definition (clap), command dispatch, dynamic tool routing
-  client.rs          CodaClient: call_tool(), dry_run_tool(), fetch_tools() (SSE parsing)
-  auth.rs            Token resolution: --token flag > CODA_API_TOKEN env > ~/.config/coda/credentials
-  validate.rs        Input validation (resource IDs, JSON payloads, stdin support)
-  sanitize.rs        Prompt injection detection/redaction (--sanitize flag)
-  output.rs          Output formatting: json (pretty), table (comfy-table), ndjson
-  error.rs           CodaError enum with ContractChanged variant for schema mismatches
-  fuzzy.rs           Fuzzy tool name resolution against cached tools
-  schema_cache.rs    Local tool schema cache + client-side payload validation
-  trace.rs           NDJSON execution tracing to stderr
+  main.rs              CLI definition (clap), dispatch, dynamic tool routing
+  client.rs            CodaClient: call_tool(), auto-pagination, error parsing
+  auth.rs              Token resolution: --token > CODA_API_TOKEN > credential file
+  validate.rs          Input validation, --json @file support
+  output.rs            JSON/table/ndjson formatting, --pick output
+  error.rs             CodaError enum with agent-friendly variants
+  fuzzy.rs             Fuzzy tool name resolution
+  schema_cache.rs      Local schema cache + client-side validation
+  sanitize.rs          Prompt injection detection/redaction
+  trace.rs             NDJSON execution tracing
   commands/
-    tools.rs         Core call() function for dynamic tool dispatch
-    mcp.rs           MCP server over stdio (JSON-RPC), dynamically loads tools
-    discover.rs      Lists/inspects tools fetched from the MCP endpoint
-    shell.rs         Persistent JSON-line REPL for agents
-    auth_cmd.rs      login, status, logout subcommands
+    compound.rs        Compound operations (scaffold, summarize, search)
+    tools.rs           Core tool dispatch and --pick
+    mcp.rs             MCP server over stdio (JSON-RPC)
+    discover.rs        Tool listing with --compact
+    shell.rs           Persistent REPL for agents
+    auth_cmd.rs        login, status, logout
 ```
-
-## Skills
-
-The `skills/` directory contains agent skill files (markdown with YAML frontmatter) that teach AI agents how to use the CLI effectively:
-
-| Skill | Description |
-|-------|-------------|
-| `coda-shared` | Auth, global flags, safety rules |
-| `coda-docs` | Doc CRUD |
-| `coda-pages` | Page management |
-| `coda-tables` | Table and column inspection |
-| `coda-rows` | Row CRUD, field filtering, bulk operations |
-| `coda-permissions` | Sharing and ACL management |
-| `coda-tool-tables` | Table creation, typed columns, views |
-| `coda-tool-content` | Page content, comments, formulas |
-| `recipe-build-doc` | End-to-end: create doc with tables and data |
-| `recipe-export-table` | Export table to NDJSON for processing |
-| `recipe-create-tracker` | Create a project tracker from a template |
-| `recipe-sync-data` | Pipe external data (GitHub, APIs, CSV) into Coda |
-
-## Example: Build a Complete Doc
-
-```bash
-# Create doc
-DOC=$(shd document_create --json '{"title": "Q2 Planning"}' --pick id)
-
-# Create a table with typed columns
-RESULT=$(shd table_create --json "{
-  \"docId\": \"$DOC\",
-  \"canvasId\": \"canvas-$DOC\",
-  \"name\": \"Tasks\",
-  \"columns\": [
-    {\"name\":\"Task\",\"isDisplayColumn\":true},
-    {\"name\":\"Status\",\"format\":{\"type\":\"sl\",\"selectOptions\":[\"To Do\",\"In Progress\",\"Done\"]}},
-    {\"name\":\"Priority\",\"format\":{\"type\":\"sl\",\"selectOptions\":[\"Low\",\"Medium\",\"High\"]}},
-    {\"name\":\"Due\",\"format\":{\"type\":\"dp\"}}
-  ]
-}")
-TABLE=$(echo "$RESULT" | jq -r '.tableId')
-
-# Add rows
-shd table_add_rows --json "{
-  \"docId\": \"$DOC\",
-  \"tableId\": \"$TABLE\",
-  \"rows\": [
-    {\"cells\": [{\"column\": \"Task\", \"value\": \"Design review\"}, {\"column\": \"Status\", \"value\": \"To Do\"}]}
-  ]
-}"
-```
-
-## Stats
-
-| Metric | Value |
-|--------|-------|
-| Language | Rust |
-| Cold startup | ~13ms |
-| Rust LOC | ~2,500 |
-| Built-in commands | 4 (`auth`, `discover`, `mcp`, `shell`) |
-| Dynamic tools | All Coda MCP tools (discovered at runtime) |
-| Agent skills | 12 |
 
 ## License
 
