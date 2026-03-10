@@ -1,4 +1,4 @@
-# shd — Superhuman Docs CLI
+# shd — CLI
 
 Agent-first command-line interface for [Coda](https://coda.io). Built in Rust. All commands dispatch dynamically to Coda's MCP tool endpoint — new tools work without a CLI rebuild.
 
