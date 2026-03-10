@@ -74,6 +74,15 @@ async fn process_line(client: &CodaClient, line: &str, dry_run: bool) -> Result<
         return client.dry_run_tool(tool_name, &payload);
     }
 
+    // Route compound operations
+    if super::compound::is_compound(tool_name) {
+        let result = super::compound::execute(client, tool_name, payload).await?;
+        if let Some(paths) = pick {
+            return pick_from_value(&result, paths);
+        }
+        return Ok(result);
+    }
+
     trace::emit_request(tool_name, &payload);
     let start = std::time::Instant::now();
 

@@ -47,6 +47,11 @@ pub async fn call(
     result.map(|_| ())
 }
 
+/// Pick fields and print — public entry point for compound operations.
+pub fn pick_and_print(value: &Value, paths: &str) -> Result<()> {
+    pick_fields(value, paths)
+}
+
 /// Extract one or more fields from a JSON value.
 /// Supports comma-separated paths: "name,id" extracts as JSON object {"name": ..., "id": ...}.
 /// Each path is dot-separated: "items.0.id" walks into nested objects/arrays.

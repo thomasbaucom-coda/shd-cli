@@ -11,6 +11,27 @@ pub fn is_enabled() -> bool {
     TRACE_ENABLED.load(Ordering::Relaxed)
 }
 
+/// Emit a trace event for a sub-step within a compound operation.
+pub fn emit_compound_step(compound_name: &str, step: usize, tool_name: &str, payload: &Value) {
+    if !is_enabled() {
+        return;
+    }
+    let payload_keys: Vec<&str> = payload
+        .as_object()
+        .map(|obj| obj.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+
+    let trace = serde_json::json!({
+        "event": "compound_step",
+        "compound": compound_name,
+        "step": step,
+        "tool": tool_name,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "payload_keys": payload_keys,
+    });
+    eprintln!("{}", serde_json::to_string(&trace).unwrap_or_default());
+}
+
 pub fn emit_request(tool_name: &str, payload: &Value) {
     if !is_enabled() {
         return;

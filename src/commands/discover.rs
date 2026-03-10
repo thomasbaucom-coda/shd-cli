@@ -24,7 +24,10 @@ async fn fetch_tools(client: &CodaClient, refresh: bool) -> Result<Vec<serde_jso
 /// If refresh is false, tries the local cache first.
 /// If filter is Some, only shows tools matching the filter in name or description.
 pub async fn discover_all(client: &CodaClient, refresh: bool, filter: Option<&str>) -> Result<()> {
-    let tools = fetch_tools(client, refresh).await?;
+    let mut tools = fetch_tools(client, refresh).await?;
+
+    // Append synthetic compound tools
+    tools.extend(super::compound::synthetic_tool_schemas());
 
     let filter_lower = filter.map(|f| f.to_lowercase());
     let mut count = 0usize;

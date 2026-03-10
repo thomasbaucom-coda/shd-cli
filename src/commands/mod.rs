@@ -1,4 +1,5 @@
 pub mod auth_cmd;
+pub mod compound;
 pub mod discover;
 pub mod mcp;
 pub mod shell;

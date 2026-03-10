@@ -281,6 +281,19 @@ async fn dispatch_tool(
         serde_json::json!({})
     };
 
+    // Compound operations are handled by the compound module
+    if commands::compound::is_compound(&resolved_name) {
+        return commands::compound::dispatch(
+            client,
+            &resolved_name,
+            payload,
+            dry_run,
+            pick,
+            format,
+        )
+        .await;
+    }
+
     // Client-side schema validation if cache available
     if let Ok(Some(cached)) = schema_cache::load() {
         if let Some(tool_schema) = schema_cache::find_tool(&cached.tools, &resolved_name) {
