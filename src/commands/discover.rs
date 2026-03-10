@@ -81,7 +81,13 @@ pub async fn discover_all(client: &CodaClient, refresh: bool, filter: Option<&st
 }
 
 /// Discover a single tool's schema. Tries cache first, falls back to network.
-pub async fn discover_one(client: &CodaClient, tool_name: &str, refresh: bool) -> Result<()> {
+/// If compact is true, shows a condensed agent-friendly view instead of full JSON.
+pub async fn discover_one(
+    client: &CodaClient,
+    tool_name: &str,
+    refresh: bool,
+    compact: bool,
+) -> Result<()> {
     let tools = fetch_tools(client, refresh).await?;
 
     let tool = tools
@@ -90,7 +96,11 @@ pub async fn discover_one(client: &CodaClient, tool_name: &str, refresh: bool) -
 
     match tool {
         Some(t) => {
-            println!("{}", serde_json::to_string_pretty(t)?);
+            if compact {
+                print_compact_schema(t);
+            } else {
+                println!("{}", serde_json::to_string_pretty(t)?);
+            }
         }
         None => {
             // Tool not in list — might have been removed
@@ -105,4 +115,152 @@ pub async fn discover_one(client: &CodaClient, tool_name: &str, refresh: bool) -
     }
 
     Ok(())
+}
+
+/// Print a compact, agent-friendly schema: name, description, required fields with types.
+fn print_compact_schema(tool: &serde_json::Value) {
+    let name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+    let desc = tool
+        .get("description")
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+
+    println!("{name}");
+    println!("  {desc}");
+
+    let schema = match tool.get("inputSchema") {
+        Some(s) => s,
+        None => {
+            println!("  (no input schema)");
+            return;
+        }
+    };
+
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let properties = schema.get("properties").and_then(|p| p.as_object());
+
+    if required.is_empty() {
+        println!("  required: (none)");
+    } else {
+        println!("  required:");
+        if let Some(props) = properties {
+            for field in &required {
+                if let Some(prop) = props.get(*field) {
+                    let type_str = compact_type(prop);
+                    let field_desc = prop
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
+                    let desc_short = if field_desc.len() > 60 {
+                        format!("{}...", &field_desc[..57])
+                    } else {
+                        field_desc.to_string()
+                    };
+                    if desc_short.is_empty() {
+                        println!("    {field}: {type_str}");
+                    } else {
+                        println!("    {field}: {type_str} — {desc_short}");
+                    }
+                } else {
+                    println!("    {field}");
+                }
+            }
+        } else {
+            println!("    {}", required.join(", "));
+        }
+    }
+
+    // Show optional fields briefly
+    if let Some(props) = properties {
+        let optional: Vec<&String> = props
+            .keys()
+            .filter(|k| !required.contains(&k.as_str()))
+            .collect();
+        if !optional.is_empty() {
+            let opt_strs: Vec<String> = optional
+                .iter()
+                .map(|k| {
+                    let type_str = props.get(k.as_str()).map(compact_type).unwrap_or_default();
+                    format!("{k}({type_str})")
+                })
+                .collect();
+            println!("  optional: {}", opt_strs.join(", "));
+        }
+    }
+
+    // Hint about tool_guide if description mentions it
+    if desc.contains("tool_guide") || desc.contains("Call tool_guide") {
+        let topic = if name.starts_with("table") || name.starts_with("view") {
+            "table"
+        } else if name.starts_with("page") {
+            "page"
+        } else if name.starts_with("content") {
+            "content"
+        } else if name.starts_with("formula") {
+            "formula"
+        } else if name.starts_with("comment") {
+            "comment"
+        } else {
+            "document"
+        };
+        println!(
+            "  tip: run `shd tool_guide --json '{{\"topic\":\"{topic}\"}}'` for usage examples"
+        );
+    }
+}
+
+/// Summarize a JSON Schema property into a short type string.
+fn compact_type(prop: &serde_json::Value) -> String {
+    // Handle anyOf / oneOf (union types)
+    if let Some(any_of) = prop.get("anyOf").or_else(|| prop.get("oneOf")) {
+        if let Some(variants) = any_of.as_array() {
+            let types: Vec<String> = variants.iter().take(4).map(compact_type).collect();
+            let joined = types.join("|");
+            if variants.len() > 4 {
+                return format!("{joined}|...");
+            }
+            return joined;
+        }
+    }
+
+    // Handle const
+    if let Some(c) = prop.get("const").and_then(|c| c.as_str()) {
+        return format!("\"{}\"", c);
+    }
+
+    // Handle enum
+    if let Some(vals) = prop.get("enum").and_then(|e| e.as_array()) {
+        let strs: Vec<&str> = vals.iter().take(5).filter_map(|v| v.as_str()).collect();
+        if vals.len() > 5 {
+            return format!("enum({}|...)", strs.join("|"));
+        }
+        return format!("enum({})", strs.join("|"));
+    }
+
+    // Handle type
+    match prop.get("type").and_then(|t| t.as_str()) {
+        Some("array") => {
+            let items_type = prop
+                .get("items")
+                .map(compact_type)
+                .unwrap_or_else(|| "any".into());
+            format!("[{items_type}]")
+        }
+        Some("object") => {
+            // Show required keys if available
+            if let Some(required) = prop.get("required").and_then(|r| r.as_array()) {
+                let keys: Vec<&str> = required.iter().take(4).filter_map(|v| v.as_str()).collect();
+                format!("{{{}}}", keys.join(", "))
+            } else {
+                "object".into()
+            }
+        }
+        Some(t) => t.to_string(),
+        None => "any".into(),
+    }
 }

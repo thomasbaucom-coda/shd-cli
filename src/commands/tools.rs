@@ -48,15 +48,16 @@ pub async fn call(
 }
 
 /// Extract one or more fields from a JSON value.
-/// Supports comma-separated paths: "name,id" extracts both as tab-separated output.
+/// Supports comma-separated paths: "name,id" extracts as JSON object {"name": ..., "id": ...}.
 /// Each path is dot-separated: "items.0.id" walks into nested objects/arrays.
 fn pick_fields(value: &Value, paths: &str) -> Result<()> {
     if paths.contains(',') {
-        let resolved: Vec<&Value> = paths
-            .split(',')
-            .map(|p| super::resolve_path(value, p.trim()))
+        let parts: Vec<&str> = paths.split(',').map(|p| p.trim()).collect();
+        let resolved: Vec<&Value> = parts
+            .iter()
+            .map(|p| super::resolve_path(value, p))
             .collect::<Result<Vec<_>>>()?;
-        output::print_picked_multi(&resolved)
+        output::print_picked_multi(&parts, &resolved)
     } else {
         let picked = super::resolve_path(value, paths)?;
         output::print_picked(picked)

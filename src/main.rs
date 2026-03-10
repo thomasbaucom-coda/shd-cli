@@ -41,7 +41,8 @@ const BANNER: &str = r#"
                   shd whoami                                        No payload needed\n  \
                   shd discover                                      List all tools\n  \
                   shd discover table_create                         Show tool schema\n  \
-                  echo '{...}' | shd table_add_rows --json -        Read payload from stdin"
+                  echo '{...}' | shd table_add_rows --json -        Read payload from stdin\n  \
+                  shd content_modify --json @payload.json           Read payload from file"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -67,7 +68,8 @@ struct Cli {
     #[arg(long, global = true)]
     trace: bool,
 
-    /// Extract a specific field from the response (dot-path, e.g. "name" or "items.0.id")
+    /// Extract field(s) from the response. Single: "name". Multi: "tableUri,columns" (returns JSON object).
+    /// Dot-paths: "items.0.id". Multi-pick keys use each path's last segment.
     #[arg(long, global = true)]
     pick: Option<String>,
 
@@ -98,6 +100,9 @@ enum Commands {
         /// Filter tools by name or description (case-insensitive substring)
         #[arg(long)]
         filter: Option<String>,
+        /// Show compact schema (required fields + types only, agent-friendly)
+        #[arg(long)]
+        compact: bool,
     },
 
     /// Start an MCP server over stdio
@@ -172,8 +177,9 @@ async fn run(cli: Cli) -> error::Result<()> {
             tool_name,
             refresh,
             filter,
+            compact,
         } => match tool_name {
-            Some(name) => commands::discover::discover_one(&client, &name, refresh).await,
+            Some(name) => commands::discover::discover_one(&client, &name, refresh, compact).await,
             None => commands::discover::discover_all(&client, refresh, filter.as_deref()).await,
         },
 
@@ -182,8 +188,15 @@ async fn run(cli: Cli) -> error::Result<()> {
         Commands::Shell => commands::shell::start(&client, dry_run).await,
 
         Commands::Tool(args) => {
-            dispatch_tool(&client, &args, dry_run, cli.pick.as_deref(), cli.fuzzy, cli.output)
-                .await
+            dispatch_tool(
+                &client,
+                &args,
+                dry_run,
+                cli.pick.as_deref(),
+                cli.fuzzy,
+                cli.output,
+            )
+            .await
         }
 
         Commands::Auth { .. } => unreachable!(),

@@ -10,10 +10,7 @@ const MCP_TOKEN_URL: &str =
 fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(url)
-            .spawn()
-            .is_ok()
+        std::process::Command::new("open").arg(url).spawn().is_ok()
     }
     #[cfg(target_os = "linux")]
     {

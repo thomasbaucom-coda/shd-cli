@@ -108,17 +108,15 @@ pub fn print_picked(value: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Print multiple picked values as tab-separated on one line.
-/// Strings print without quotes, other types as compact JSON.
-pub fn print_picked_multi(values: &[&Value]) -> Result<()> {
-    let parts: Vec<String> = values
-        .iter()
-        .map(|v| match v {
-            Value::String(s) => s.clone(),
-            _ => serde_json::to_string(v).unwrap_or_default(),
-        })
-        .collect();
-    println!("{}", parts.join("\t"));
+/// Print multiple picked values as a JSON object keyed by their path's last segment.
+/// Example: --pick "docUri,pages" → {"docUri": "...", "pages": [...]}
+pub fn print_picked_multi(paths: &[&str], values: &[&Value]) -> Result<()> {
+    let mut obj = serde_json::Map::new();
+    for (path, value) in paths.iter().zip(values.iter()) {
+        let key = path.rsplit('.').next().unwrap_or(path);
+        obj.insert(key.to_string(), (*value).clone());
+    }
+    println!("{}", serde_json::to_string_pretty(&Value::Object(obj))?);
     Ok(())
 }
 

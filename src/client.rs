@@ -68,6 +68,16 @@ impl CodaClient {
         // The tool endpoint wraps results in {toolName, result, executionTime}
         let mut result = resp_body.get("result").cloned().unwrap_or(resp_body);
 
+        // Detect error-as-success: Coda sometimes returns {"error": "..."} with HTTP 200
+        if let Some(err_msg) = result.get("error").and_then(|e| e.as_str()) {
+            if result.as_object().is_some_and(|m| m.len() == 1) {
+                return Err(CodaError::Api {
+                    status: 200,
+                    message: err_msg.to_string(),
+                });
+            }
+        }
+
         // Auto-paginate: if result has items + nextPageToken, follow pages
         self.auto_paginate(tool_name, &payload, &mut result).await;
 

@@ -18,8 +18,31 @@ pub fn resolve_path<'a>(value: &'a Value, path: &str) -> Result<&'a Value> {
             current.get(segment)
         }
         .ok_or_else(|| {
-            CodaError::Validation(format!("Field '{path}' not found (failed at '{segment}')"))
+            let available = available_keys(current);
+            let hint = if available.is_empty() {
+                String::new()
+            } else {
+                format!(". Available: {}", available.join(", "))
+            };
+            CodaError::Validation(format!(
+                "Field '{path}' not found (failed at '{segment}'){hint}"
+            ))
         })?;
     }
     Ok(current)
+}
+
+/// List available keys/indices for error hints.
+fn available_keys(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(map) => map.keys().cloned().collect(),
+        Value::Array(arr) => {
+            if arr.len() <= 5 {
+                (0..arr.len()).map(|i| i.to_string()).collect()
+            } else {
+                vec![format!("0..{}", arr.len() - 1)]
+            }
+        }
+        _ => vec![],
+    }
 }

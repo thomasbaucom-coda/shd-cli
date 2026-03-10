@@ -46,12 +46,16 @@ pub fn validate_json_payload(raw: &str) -> Result<serde_json::Value, CodaError> 
         .map_err(|e| CodaError::Validation(format!("Invalid JSON payload: {e}")))
 }
 
-/// Resolve a JSON payload from either a literal string or stdin (if value is "-").
+/// Resolve a JSON payload from a literal string, stdin ("-"), or file path ("@path").
 pub fn resolve_json_payload(value: &str) -> Result<serde_json::Value, CodaError> {
     if value == "-" {
         let mut buf = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).map_err(CodaError::Io)?;
         validate_json_payload(buf.trim())
+    } else if let Some(path) = value.strip_prefix('@') {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| CodaError::Validation(format!("Cannot read file '{path}': {e}")))?;
+        validate_json_payload(content.trim())
     } else {
         validate_json_payload(value)
     }

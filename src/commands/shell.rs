@@ -90,13 +90,17 @@ async fn process_line(client: &CodaClient, line: &str, dry_run: bool) -> Result<
 }
 
 /// Pick fields from a Value, returning the extracted value(s).
+/// Multi-field returns a JSON object keyed by each path's last segment.
 fn pick_from_value(value: &Value, paths: &str) -> Result<Value> {
     if paths.contains(',') {
-        let results: Vec<Value> = paths
-            .split(',')
-            .map(|p| super::resolve_path(value, p.trim()).cloned())
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Value::Array(results))
+        let mut obj = serde_json::Map::new();
+        for p in paths.split(',') {
+            let p = p.trim();
+            let key = p.rsplit('.').next().unwrap_or(p);
+            let val = super::resolve_path(value, p)?.clone();
+            obj.insert(key.to_string(), val);
+        }
+        Ok(Value::Object(obj))
     } else {
         super::resolve_path(value, paths).cloned()
     }
