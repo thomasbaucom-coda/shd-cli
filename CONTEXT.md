@@ -1,109 +1,147 @@
-# Coda CLI (`coda`) Context
+# shd CLI — Agent Context
 
-The `coda` CLI provides programmatic access to Coda docs, pages, tables, rows, formulas, controls, folders, and permissions. It also runs as an MCP server for direct AI agent integration.
+This file is for AI agents using the CLI. For developer/contributor docs, see `CLAUDE.md`.
 
-## Rules of Engagement for Agents
+## Architecture
 
-* **Schema Discovery:** If you don't know the exact JSON payload structure, run `coda schema <resource>.<method>` first to inspect parameters and schemas. This is a local operation — no network call.
-* **Context Window Protection:** Coda tables can return many columns per row. ALWAYS use `--fields "Col1,Col2"` when listing rows to limit output to only the columns you need.
-* **Dry-Run Safety:** ALWAYS use `--dry-run` for mutating operations (create, update, delete, upsert) to validate your request before actual execution.
-* **ID Discovery:** Get resource IDs from list commands before operating on them. Do not guess or fabricate IDs. Use `coda resolve-url` to extract IDs from Coda URLs.
-* **Confirm Destructive Actions:** Always confirm with the user before running delete commands.
-* **Use --page-all for bulk reads:** When you need all rows from a table, use `--page-all` which auto-paginates and streams NDJSON.
+`shd` is a fully dynamic CLI for Coda. There are no hardcoded resource commands — all API interaction goes through a single tool endpoint. Tools are discovered at runtime from Coda's MCP endpoint and cached locally.
 
-## Core Syntax
+Two categories of tools:
+- **API tools** (28+): Direct Coda operations like `document_read`, `page_create`, `table_read_rows`. Discovered via `shd discover`.
+- **Compound operations** (4): Synthetic tools that orchestrate multiple API calls: `doc_scaffold`, `page_create_with_content`, `doc_summarize`, `table_search`.
 
-```bash
-coda <resource> <method> [args] [flags]
-```
+Core syntax: `shd <tool_name> --json '{"key":"value"}'`
 
-Use `--help` on any command for usage:
+## Essential: Always Use --pick
+
+API responses can be hundreds of tokens. Use `--pick` to extract only what you need.
 
 ```bash
-coda --help
-coda <resource> --help
-coda <resource> <method> --help
+# Bad: returns entire user object (~200 tokens)
+shd whoami
+
+# Good: returns just the name (~5 tokens)
+shd whoami --pick name
+
+# Multi-pick: returns JSON object with selected fields
+shd page_create --json '{...}' --pick canvasUri,pageUri
+
+# Dot paths into nested objects
+shd doc_summarize --json '{...}' --pick pages.0.title
 ```
 
-### Global Flags
+## Discovering Tools
 
-| Flag | Description |
-|------|-------------|
-| `--token <TOKEN>` | API token (overrides CODA_API_TOKEN env var) |
-| `--output <FORMAT>` | Output format: `json` (default), `table`, `ndjson` |
-| `--dry-run` | Preview the HTTP request without sending it |
-
-### Key Patterns
-
-**1. Reading data — always limit output:**
 ```bash
-coda docs list --limit 10
-coda rows list <docId> <tableId> --fields "Name,Status" --limit 20
-coda schema rows.list
+shd discover                           # List all tools
+shd discover --filter table            # Filter by keyword
+shd discover content_modify --compact  # Agent-friendly 5-line summary
+shd discover table_create              # Full schema with descriptions
 ```
 
-**2. Writing data — always dry-run first:**
+Compound tools (`doc_scaffold`, `page_create_with_content`, `doc_summarize`, `table_search`) appear alongside API tools in discovery output.
+
+If you get a `contract_changed` error, run `shd discover --refresh` — a tool may have been renamed.
+
+## The coda:// URI Scheme
+
+All Coda resources are addressed by URI:
+
+| URI pattern | Example |
+|-------------|---------|
+| `coda://docs/{docId}` | `coda://docs/AbCdEf` |
+| `coda://docs/{docId}/pages/{pageId}` | `coda://docs/AbCdEf/pages/section-XyZ` |
+| `coda://docs/{docId}/canvases/canvas-{id}` | `coda://docs/AbCdEf/canvases/canvas-123` |
+| `coda://docs/{docId}/tables/grid-{id}` | `coda://docs/AbCdEf/tables/grid-456` |
+
+You get these URIs from tool responses (`docUri`, `pageUri`, `canvasUri`, `tableUri`). Never fabricate them — always discover via API calls or synced CONTEXT.md files.
+
+## Payload Delivery
+
 ```bash
-coda docs create --json '{"title": "My Doc"}' --dry-run
-coda rows upsert <docId> <tableId> --json '{"rows": [...]}' --dry-run
+# Inline (small payloads)
+shd page_create --json '{"uri":"coda://docs/abc","title":"My Page"}'
+
+# From file (large payloads, no shell escaping issues)
+shd doc_scaffold --json @blueprint.json
+
+# From stdin (piping)
+echo '{"uri":"coda://docs/abc"}' | shd doc_summarize --json -
 ```
 
-**3. Schema introspection (no network call):**
+## Sync: Local Filesystem Access
+
+`shd sync` materializes a Coda document to `.coda/` as readable files:
+
 ```bash
-coda schema list                  # List all resources
-coda schema rows                  # List methods for rows
-coda schema rows.list             # Full parameter and schema info
-coda schema docs.create           # Request body schema
+shd sync --doc-url "https://coda.io/d/My-Doc_dAbCdEf"
 ```
 
-**4. Working with rows:**
+This creates:
+```
+.coda/
+├── INDEX.md                              # All synced docs
+└── docs/<slug>/
+    ├── CONTEXT.md                        # Pages, tables, columns for this doc
+    ├── pages/<slug>.md                   # Page content as markdown
+    └── pages/tables/<slug>/rows.ndjson   # Flattened table rows
+```
+
+**Reading synced data:**
+1. Start with `.coda/INDEX.md` to see what's available
+2. Read `.coda/docs/<slug>/CONTEXT.md` for a specific doc's structure
+3. Read `.md` files for page content, `rows.ndjson` for table data
+4. Grep across `rows.ndjson` files to search all tables
+
+**When to sync vs API:** Sync for reading (bulk exploration, searching). API for writing (creating, updating).
+
+**Not every doc is synced.** If the doc you need isn't in `.coda/`, run `shd sync --doc-url "<url>"` first.
+
+**The `--sync` flag** on any tool call triggers a background sync when the response contains a `docUri`:
 ```bash
-# List with field filtering
-coda rows list <docId> <tableId> --fields "Name,Email,Status" --limit 50
-
-# Stream ALL rows (auto-paginated NDJSON)
-coda rows list <docId> <tableId> --page-all
-
-# Upsert rows (insert or update by key column)
-coda rows upsert <docId> <tableId> --json '{
-  "rows": [
-    {"cells": [{"column": "Name", "value": "Alice"}, {"column": "Status", "value": "Active"}]}
-  ],
-  "keyColumns": ["Name"]
-}'
-
-# Push a button
-coda rows push-button <docId> <tableId> <rowId> <columnId>
+shd doc_scaffold --json @blueprint.json --sync
+# → Creates doc, prints result immediately
+# → Background process syncs to .coda/ (~20s later)
 ```
 
-**5. URL resolution:**
+## Error Patterns
+
+All errors are JSON on stderr with exit code 1:
+
+| Error type | Meaning | What to do |
+|------------|---------|------------|
+| `api_error` | HTTP error from Coda (404, 429, etc.) | Check the message, retry on 429 |
+| `validation_error` | Bad payload shape or missing fields | Check required fields via `shd discover <tool> --compact` |
+| `contract_changed` | Tool renamed or schema changed | Run `shd discover --refresh` |
+| `auth_required` | No token | Run `shd auth login` or set `CODA_API_TOKEN` |
+
+## Chaining Operations
+
+Common multi-step patterns:
+
+**Understand then create:**
 ```bash
-# Decode a Coda URL to get docId, pageId, tableId, etc.
-coda resolve-url "https://coda.io/d/_dAbCdEf/Page_suXYZ"
+shd doc_summarize --json '{"uri":"coda://docs/SOURCE"}' --pick pages,tables
+# Read the structure, then scaffold a similar doc
+shd doc_scaffold --json @new-blueprint.json --sync
 ```
 
-**6. Permissions:**
+**Sync then search:**
 ```bash
-coda permissions list <docId>
-coda permissions metadata <docId>
-coda permissions add <docId> --json '{"access": "readonly", "principal": {"type": "email", "email": "user@example.com"}}' --dry-run
+shd sync --doc-url "https://coda.io/d/..."
+# Read .coda/docs/*/CONTEXT.md to find the table
+# Grep rows.ndjson for specific values
 ```
 
-**7. MCP server mode:**
+**Create then iterate:**
 ```bash
-# Start as an MCP server over stdio (for Claude Desktop, VS Code, etc.)
-coda mcp
+shd doc_scaffold --json @blueprint.json --sync --pick docUri
+# Wait for background sync, then read CONTEXT.md
+# Add more content via page_create_with_content
 ```
 
-## Authentication
+## Skills Directory
 
-Set `CODA_API_TOKEN` environment variable (preferred for agents) or run `coda auth login`.
-
-## Error Handling
-
-All errors are returned as structured JSON on stderr:
-```json
-{"error": true, "message": "API error (404): Doc not found"}
-```
-
-Exit code 1 indicates an error. Exit code 0 indicates success.
+Detailed usage guides are in `skills/`:
+- `fundamentals/` — Getting started, discovering tools, sync and reading
+- `workflows/` — Scaffolding docs, creating pages, summarizing, searching, row operations

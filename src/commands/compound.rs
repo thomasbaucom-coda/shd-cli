@@ -30,11 +30,11 @@ pub async fn dispatch(
     dry_run: bool,
     pick: Option<&str>,
     format: OutputFormat,
-) -> Result<()> {
+) -> Result<Option<Value>> {
     if dry_run {
         let preview = dry_run_preview(tool_name, &payload);
         output::print_response(&preview, format)?;
-        return Ok(());
+        return Ok(None);
     }
 
     let result = execute(client, tool_name, payload).await?;
@@ -45,7 +45,7 @@ pub async fn dispatch(
         output::print_response(&result, format)?;
     }
 
-    Ok(())
+    Ok(Some(result))
 }
 
 /// Execute a compound operation and return the result as a Value.

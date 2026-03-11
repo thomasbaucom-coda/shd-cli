@@ -14,7 +14,7 @@ cargo fmt -- --check           # Check formatting
 cargo fmt                      # Auto-format
 ```
 
-The binary is named `coda` (defined in Cargo.toml `[[bin]]`).
+The binary is named `shd` (defined in Cargo.toml `[[bin]]`).
 
 ## Architecture
 
@@ -39,6 +39,17 @@ This is a Rust CLI (`coda`) for interacting with the Coda.io API. It follows a *
 - `src/commands/mcp.rs` — MCP server over stdio (JSON-RPC), dynamically loads tools from Coda on startup
 - `src/commands/discover.rs` — Lists/inspects tools fetched from the MCP endpoint
 - `src/commands/auth_cmd.rs` — `login`, `status`, `logout` subcommands
+- `src/commands/sync.rs` — `sync` command: materialize docs to `.coda/` filesystem
+- `src/cell.rs` — Cell value unwrapping and row flattening for sync
+- `src/slug.rs` — Slugification, Coda browser URL parsing
+
+### Agent-Facing Documentation
+
+- `CONTEXT.md` — Agent usage guide (how to use the CLI). Separate from this file.
+- `skills/fundamentals/` — Getting started, discovering tools, sync and reading
+- `skills/workflows/` — Scaffolding, page creation, summarizing, searching, row ops, create-then-sync
+
+When adding/removing CLI flags or compound operations, update the corresponding skill files and CONTEXT.md.
 
 ### Error Handling Pattern
 

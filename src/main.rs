@@ -1,4 +1,5 @@
 mod auth;
+mod cell;
 mod client;
 mod commands;
 mod error;
@@ -6,6 +7,7 @@ mod fuzzy;
 mod output;
 mod sanitize;
 mod schema_cache;
+mod slug;
 mod trace;
 mod validate;
 
@@ -68,7 +70,8 @@ struct Cli {
     #[arg(long, global = true)]
     trace: bool,
 
-    /// Extract field(s) from the response. Single: "name". Multi: "tableUri,columns" (returns JSON object).
+    /// RECOMMENDED — extract only needed field(s) to minimize token usage.
+    /// Single: "name". Multi: "tableUri,columns" (returns JSON object).
     /// Dot-paths: "items.0.id". Multi-pick keys use each path's last segment.
     #[arg(long, global = true)]
     pick: Option<String>,
@@ -110,6 +113,33 @@ enum Commands {
 
     /// Start a persistent shell for agents (JSON-line protocol over stdio)
     Shell,
+
+    /// Sync a Coda document to the local filesystem for agent access
+    Sync {
+        /// Document URI (coda://docs/{docId})
+        #[arg(long)]
+        doc_uri: Option<String>,
+
+        /// Coda document browser URL (e.g., https://coda.io/d/My-Doc_dAbCdEf)
+        #[arg(long)]
+        doc_url: Option<String>,
+
+        /// Output directory
+        #[arg(long, default_value = ".coda")]
+        root: String,
+
+        /// Re-sync everything, ignore cached state
+        #[arg(long)]
+        force: bool,
+
+        /// Skip page content, only sync table data
+        #[arg(long)]
+        tables_only: bool,
+
+        /// Maximum rows per table
+        #[arg(long, default_value = "5000")]
+        max_rows: usize,
+    },
 
     /// Call any tool dynamically. Usage: coda <tool_name> [--json '{...}']
     #[command(external_subcommand)]
@@ -187,6 +217,42 @@ async fn run(cli: Cli) -> error::Result<()> {
 
         Commands::Shell => commands::shell::start(&client, dry_run).await,
 
+        Commands::Sync {
+            doc_uri,
+            doc_url,
+            root,
+            force,
+            tables_only,
+            max_rows,
+        } => {
+            let resolved_uri = match (doc_uri, doc_url) {
+                (Some(uri), _) => uri,
+                (None, Some(url)) => {
+                    slug::resolve_doc_input(&url).map_err(error::CodaError::Validation)?
+                }
+                (None, None) => {
+                    return Err(error::CodaError::Validation(
+                        "Either --doc-uri or --doc-url is required.\n\
+                         Example: shd sync --doc-url \"https://coda.io/d/My-Doc_dAbCdEf\""
+                            .into(),
+                    ))
+                }
+            };
+            let root_path = expand_tilde(&root);
+            commands::sync::run(
+                &client,
+                commands::sync::SyncOpts {
+                    doc_uri: resolved_uri,
+                    root: root_path,
+                    force,
+                    dry_run,
+                    tables_only,
+                    max_rows,
+                },
+            )
+            .await
+        }
+
         Commands::Tool(args) => {
             dispatch_tool(
                 &client,
@@ -203,7 +269,22 @@ async fn run(cli: Cli) -> error::Result<()> {
     }
 }
 
-/// Parse dynamic tool args: <tool_name> [--json <payload>] [--dry-run] [--sanitize] [--trace] [--pick <field>] [--fuzzy]
+/// Expand `~` to the user's home directory.
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    std::path::PathBuf::from(path)
+}
+
+/// Parse dynamic tool args: <tool_name> [--json <payload>] [--dry-run] [--sanitize] [--trace] [--pick <field>] [--fuzzy] [--sync]
 /// If no --json is provided, sends empty payload.
 async fn dispatch_tool(
     client: &client::CodaClient,
@@ -239,6 +320,7 @@ async fn dispatch_tool(
     if args.iter().any(|a| a == "--quiet") {
         output::set_quiet(true);
     }
+    let auto_sync = args.iter().any(|a| a == "--sync");
 
     // Parse --pick from external subcommand args
     let pick_owned: Option<String> = args
@@ -281,25 +363,137 @@ async fn dispatch_tool(
         serde_json::json!({})
     };
 
-    // Compound operations are handled by the compound module
-    if commands::compound::is_compound(&resolved_name) {
-        return commands::compound::dispatch(
-            client,
-            &resolved_name,
-            payload,
-            dry_run,
-            pick,
-            format,
-        )
-        .await;
-    }
+    // Execute the tool and capture the result for --sync
+    let result: Option<serde_json::Value> = if commands::compound::is_compound(&resolved_name) {
+        commands::compound::dispatch(client, &resolved_name, payload, dry_run, pick, format).await?
+    } else {
+        // Client-side schema validation if cache available
+        if let Ok(Some(cached)) = schema_cache::load() {
+            if let Some(tool_schema) = schema_cache::find_tool(&cached.tools, &resolved_name) {
+                schema_cache::validate_payload(tool_schema, &payload)?;
+            }
+        }
+        commands::tools::call(client, &resolved_name, payload, dry_run, pick, format).await?
+    };
 
-    // Client-side schema validation if cache available
-    if let Ok(Some(cached)) = schema_cache::load() {
-        if let Some(tool_schema) = schema_cache::find_tool(&cached.tools, &resolved_name) {
-            schema_cache::validate_payload(tool_schema, &payload)?;
+    // Auto-sync: if --sync was passed and the result contains a docUri,
+    // spawn a background child process to sync the doc.
+    // This avoids blocking for ~20s while Coda makes the doc ready.
+    if auto_sync {
+        if let Some(ref value) = result {
+            if let Some(doc_uri) = extract_doc_uri(value) {
+                spawn_background_sync(&doc_uri)?;
+            } else {
+                output::info("[sync] No docUri found in response — nothing to sync.\n");
+            }
         }
     }
 
-    commands::tools::call(client, &resolved_name, payload, dry_run, pick, format).await
+    Ok(())
+}
+
+/// Spawn a background child process to sync a doc.
+/// The parent returns immediately; the child waits for Coda readiness, then syncs.
+fn spawn_background_sync(doc_uri: &str) -> error::Result<()> {
+    let exe = std::env::current_exe().map_err(|e| {
+        error::CodaError::Other(format!("Could not determine CLI executable path: {e}"))
+    })?;
+
+    let child = std::process::Command::new(exe)
+        .args(["sync", "--doc-uri", doc_uri, "--quiet"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    match child {
+        Ok(c) => {
+            output::info(&format!(
+                "\n[sync] Syncing in background (pid {}). Files will appear in .coda/ shortly.\n",
+                c.id()
+            ));
+        }
+        Err(e) => {
+            output::info(&format!(
+                "\n[sync] Could not spawn background sync: {e}\n\
+                 Run manually: shd sync --doc-uri \"{doc_uri}\"\n"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract a doc URI from a tool response.
+/// Checks for `docUri`, `uri`, or constructs one from `docId`.
+fn extract_doc_uri(value: &serde_json::Value) -> Option<String> {
+    // Direct docUri field
+    if let Some(uri) = value.get("docUri").and_then(|v| v.as_str()) {
+        if uri.starts_with("coda://") {
+            return Some(uri.to_string());
+        }
+    }
+
+    // URI field that looks like a doc URI
+    if let Some(uri) = value.get("uri").and_then(|v| v.as_str()) {
+        if uri.starts_with("coda://docs/") && !uri.contains("/pages/") {
+            return Some(uri.to_string());
+        }
+    }
+
+    // Construct from docId
+    if let Some(doc_id) = value.get("docId").and_then(|v| v.as_str()) {
+        return Some(format!("coda://docs/{doc_id}"));
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_doc_uri_from_doc_uri_field() {
+        let val = json!({"docUri": "coda://docs/abc", "title": "Test"});
+        assert_eq!(extract_doc_uri(&val), Some("coda://docs/abc".into()));
+    }
+
+    #[test]
+    fn extract_doc_uri_from_uri_field() {
+        let val = json!({"uri": "coda://docs/abc"});
+        assert_eq!(extract_doc_uri(&val), Some("coda://docs/abc".into()));
+    }
+
+    #[test]
+    fn extract_doc_uri_skips_page_uri() {
+        let val = json!({"uri": "coda://docs/abc/pages/xyz"});
+        assert_eq!(extract_doc_uri(&val), None);
+    }
+
+    #[test]
+    fn extract_doc_uri_from_doc_id() {
+        let val = json!({"docId": "abc123"});
+        assert_eq!(extract_doc_uri(&val), Some("coda://docs/abc123".into()));
+    }
+
+    #[test]
+    fn extract_doc_uri_none_when_missing() {
+        let val = json!({"name": "hello"});
+        assert_eq!(extract_doc_uri(&val), None);
+    }
+
+    #[test]
+    fn expand_tilde_home() {
+        let expanded = expand_tilde("~/test");
+        assert!(expanded.to_string_lossy().contains("test"));
+        assert!(!expanded.to_string_lossy().starts_with("~"));
+    }
+
+    #[test]
+    fn expand_tilde_no_tilde() {
+        let expanded = expand_tilde(".coda");
+        assert_eq!(expanded, std::path::PathBuf::from(".coda"));
+    }
 }

@@ -3,6 +3,7 @@ pub mod compound;
 pub mod discover;
 pub mod mcp;
 pub mod shell;
+pub mod sync;
 pub mod tools;
 
 use crate::error::{CodaError, Result};
