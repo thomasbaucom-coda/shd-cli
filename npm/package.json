@@ -1,5 +1,5 @@
 {
-  "name": "shd",
+  "name": "@thomasbaucom-coda/shd",
   "version": "0.1.0",
   "description": "Coda CLI — agent-first command-line interface for Coda docs",
   "license": "MIT",
@@ -17,6 +17,9 @@
   ],
   "scripts": {
     "postinstall": "node install.js"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "engines": {
     "node": ">=18"
