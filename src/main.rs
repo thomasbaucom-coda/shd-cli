@@ -70,7 +70,8 @@ struct Cli {
     #[arg(long, global = true)]
     trace: bool,
 
-    /// Extract field(s) from the response. Single: "name". Multi: "tableUri,columns" (returns JSON object).
+    /// RECOMMENDED — extract only needed field(s) to minimize token usage.
+    /// Single: "name". Multi: "tableUri,columns" (returns JSON object).
     /// Dot-paths: "items.0.id". Multi-pick keys use each path's last segment.
     #[arg(long, global = true)]
     pick: Option<String>,

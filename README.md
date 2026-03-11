@@ -146,7 +146,8 @@ Built for AI agents following [agent-first CLI design](https://justin.poehnelt.c
 - **Client-side validation** — payloads validated against cached schemas before sending
 - **Structured errors** — JSON on stderr, exit code 1, agent-friendly error types
 - **Dry-run** — `--dry-run` previews requests without auth
-- **12 skill files** in `skills/` teach agents CLI patterns and safety rules
+- **9 skill files** in `skills/` (3 fundamentals + 6 workflows) teach agents CLI patterns, Coda best practices, and safety rules
+- **CONTEXT.md** at repo root provides agent-facing orientation (separate from developer CLAUDE.md)
 
 ## Architecture
 
