@@ -4,8 +4,9 @@ use crate::output::{self, OutputFormat};
 use crate::trace;
 use serde_json::{json, Value};
 
-/// Call any tool by name with a JSON payload.
-/// This is the core dispatch — all commands go through here.
+/// Call any tool by name with a JSON payload, print the result, and return it.
+/// Returns `Ok(Some(value))` on success, `Ok(None)` for dry-run, `Err` on failure.
+/// The returned value is used by `--sync` to inspect the response for a `docUri`.
 pub async fn call(
     client: &CodaClient,
     tool_name: &str,
@@ -13,10 +14,10 @@ pub async fn call(
     dry_run: bool,
     pick: Option<&str>,
     format: OutputFormat,
-) -> Result<()> {
+) -> Result<Option<Value>> {
     if dry_run {
         output::print_response(&client.dry_run_tool(tool_name, &payload)?, format)?;
-        return Ok(());
+        return Ok(None);
     }
 
     trace::emit_request(tool_name, &payload);
@@ -44,7 +45,7 @@ pub async fn call(
         }
     }
 
-    result.map(|_| ())
+    result.map(Some)
 }
 
 /// Pick fields and print — public entry point for compound operations.
