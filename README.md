@@ -11,6 +11,16 @@ curl -fsSL https://raw.githubusercontent.com/thomasbaucom-coda/shd-cli/main/inst
 Requires the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated with repo access. No Rust or npm needed — downloads a pre-built binary.
 
 <details>
+<summary>Alternative: install via npm</summary>
+
+```bash
+npm install -g @thomasbaucom-coda/shd
+```
+
+Requires [GitHub Packages auth](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry#authenticating-to-github-packages). The binary command is `shd`.
+</details>
+
+<details>
 <summary>Alternative: build from source</summary>
 
 ```bash
