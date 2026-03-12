@@ -5,6 +5,7 @@ mod commands;
 mod error;
 mod fuzzy;
 mod output;
+mod polish;
 mod sanitize;
 mod schema_cache;
 mod slug;
@@ -79,6 +80,10 @@ struct Cli {
     /// Resolve tool name via fuzzy matching against cached tools
     #[arg(long, global = true)]
     fuzzy: bool,
+
+    /// Polish text content through Claude before sending to Coda
+    #[arg(long, global = true, env = "SHD_POLISH")]
+    polish: bool,
 
     /// Suppress informational stderr messages (status, cache hints)
     #[arg(long, global = true)]
@@ -261,6 +266,7 @@ async fn run(cli: Cli) -> error::Result<()> {
                 cli.pick.as_deref(),
                 cli.fuzzy,
                 cli.output,
+                cli.polish,
             )
             .await
         }
@@ -293,6 +299,7 @@ async fn dispatch_tool(
     mut pick: Option<&str>,
     mut use_fuzzy: bool,
     format: output::OutputFormat,
+    mut polish: bool,
 ) -> error::Result<()> {
     if args.is_empty() {
         return Err(error::CodaError::Validation(
@@ -319,6 +326,9 @@ async fn dispatch_tool(
     }
     if args.iter().any(|a| a == "--quiet") {
         output::set_quiet(true);
+    }
+    if args.iter().any(|a| a == "--polish") {
+        polish = true;
     }
     let auto_sync = args.iter().any(|a| a == "--sync");
 
@@ -354,7 +364,7 @@ async fn dispatch_tool(
     };
 
     // Find --json value
-    let payload = if let Some(pos) = args.iter().position(|a| a == "--json") {
+    let mut payload = if let Some(pos) = args.iter().position(|a| a == "--json") {
         let json_str = args
             .get(pos + 1)
             .ok_or_else(|| error::CodaError::Validation("--json requires a value".into()))?;
@@ -362,6 +372,14 @@ async fn dispatch_tool(
     } else {
         serde_json::json!({})
     };
+
+    // Polish text fields before sending to Coda
+    if polish {
+        let count = polish::polish_payload(&resolved_name, &mut payload).await?;
+        if count > 0 {
+            output::info(&format!("[polish] Polished {count} text field(s).\n"));
+        }
+    }
 
     // Execute the tool and capture the result for --sync
     let result: Option<serde_json::Value> = if commands::compound::is_compound(&resolved_name) {

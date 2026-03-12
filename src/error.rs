@@ -23,6 +23,9 @@ pub enum CodaError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Polish error: {0}")]
+    Polish(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -34,6 +37,7 @@ impl CodaError {
             CodaError::Api { .. } => "api_error",
             CodaError::Validation(_) => "validation_error",
             CodaError::NoToken => "auth_required",
+            CodaError::Polish(_) => "polish_error",
             _ => "error",
         }
     }
