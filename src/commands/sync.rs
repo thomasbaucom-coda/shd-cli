@@ -23,7 +23,7 @@
 //! ```
 
 use crate::cell;
-use crate::client::{CodaClient, ToolCaller};
+use crate::client::ToolCaller;
 use crate::error::{CodaError, Result};
 use crate::output;
 use crate::slug;
@@ -46,7 +46,7 @@ pub struct SyncOpts {
     pub max_rows: usize,
 }
 
-pub async fn run(client: &CodaClient, opts: SyncOpts) -> Result<()> {
+pub async fn run(client: &dyn ToolCaller, opts: SyncOpts) -> Result<()> {
     let root = &opts.root;
 
     if opts.dry_run {
@@ -194,7 +194,7 @@ struct SyncStats {
 // ---------------------------------------------------------------------------
 
 async fn sync_document(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     opts: &SyncOpts,
     docs_dir: &Path,
     manifest: &mut SyncManifest,
@@ -345,7 +345,7 @@ async fn sync_document(
 /// Sync a single page. Returns (pages_synced, tables_synced, rows_synced, PageDetail).
 #[allow(clippy::too_many_arguments)]
 async fn sync_page(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     page: &Value,
     pages_dir: &Path,
     tables_dir: &Path,
@@ -458,7 +458,7 @@ async fn sync_page(
 
 /// Sync a single table. Returns (tables_synced, rows_synced, TableDetail).
 async fn sync_table(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     table: &Value,
     tables_dir: &Path,
     opts: &SyncOpts,
@@ -677,7 +677,7 @@ fn write_index_md(root: &Path, manifest: &SyncManifest) -> Result<()> {
 // Dry run
 // ---------------------------------------------------------------------------
 
-async fn dry_run_preview(client: &CodaClient, opts: &SyncOpts) -> Result<()> {
+async fn dry_run_preview(client: &dyn ToolCaller, opts: &SyncOpts) -> Result<()> {
     let doc_result = client
         .call_tool(
             "document_read",
@@ -804,7 +804,7 @@ fn plural(n: usize, singular: &str) -> String {
 // ---------------------------------------------------------------------------
 
 async fn call_with_retry(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     tool_name: &str,
     payload: Value,
     max_retries: u32,

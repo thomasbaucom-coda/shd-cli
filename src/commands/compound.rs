@@ -3,7 +3,7 @@
 //! These synthetic tools compose multiple Coda API calls into single
 //! CLI invocations, reducing agent call count and chaining overhead.
 
-use crate::client::{CodaClient, ToolCaller};
+use crate::client::ToolCaller;
 use crate::error::{CodaError, Result};
 use crate::output::{self, OutputFormat};
 use crate::trace;
@@ -23,20 +23,14 @@ pub fn is_compound(name: &str) -> bool {
 }
 
 /// CLI dispatch: execute a compound operation and print the result.
+/// Dry-run handling is done by the caller before reaching this function.
 pub async fn dispatch(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     tool_name: &str,
     payload: Value,
-    dry_run: bool,
     pick: Option<&str>,
     format: OutputFormat,
 ) -> Result<Option<Value>> {
-    if dry_run {
-        let preview = dry_run_preview(tool_name, &payload);
-        output::print_response(&preview, format)?;
-        return Ok(None);
-    }
-
     let result = execute(client, tool_name, payload).await?;
 
     if let Some(paths) = pick {
@@ -50,7 +44,7 @@ pub async fn dispatch(
 
 /// Execute a compound operation and return the result as a Value.
 /// Used by both CLI dispatch and shell/MCP modes.
-pub async fn execute(client: &CodaClient, tool_name: &str, payload: Value) -> Result<Value> {
+pub async fn execute(client: &dyn ToolCaller, tool_name: &str, payload: Value) -> Result<Value> {
     match tool_name {
         "page_create_with_content" => page_create_with_content(client, payload).await,
         "doc_scaffold" => doc_scaffold(client, payload).await,
@@ -152,7 +146,7 @@ pub fn synthetic_tool_schemas() -> Vec<Value> {
 // ---------------------------------------------------------------------------
 
 /// Create a page and optionally insert markdown content.
-async fn page_create_with_content(client: &CodaClient, payload: Value) -> Result<Value> {
+async fn page_create_with_content(client: &dyn ToolCaller, payload: Value) -> Result<Value> {
     let uri = payload
         .get("uri")
         .and_then(|v| v.as_str())
@@ -214,7 +208,7 @@ async fn page_create_with_content(client: &CodaClient, payload: Value) -> Result
 }
 
 /// Create a complete document from a blueprint.
-async fn doc_scaffold(client: &CodaClient, payload: Value) -> Result<Value> {
+async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> {
     let title = payload
         .get("title")
         .and_then(|v| v.as_str())
@@ -446,7 +440,7 @@ async fn doc_scaffold(client: &CodaClient, payload: Value) -> Result<Value> {
 }
 
 /// Read a document and return a condensed summary.
-async fn doc_summarize(client: &CodaClient, payload: Value) -> Result<Value> {
+async fn doc_summarize(client: &dyn ToolCaller, payload: Value) -> Result<Value> {
     let uri = payload
         .get("uri")
         .and_then(|v| v.as_str())
@@ -559,7 +553,7 @@ async fn doc_summarize(client: &CodaClient, payload: Value) -> Result<Value> {
 }
 
 /// Read table rows and filter client-side by column value.
-async fn table_search(client: &CodaClient, payload: Value) -> Result<Value> {
+async fn table_search(client: &dyn ToolCaller, payload: Value) -> Result<Value> {
     let uri = payload
         .get("uri")
         .and_then(|v| v.as_str())
@@ -697,7 +691,7 @@ fn unwrap_cell(cell: &Value) -> String {
 
 /// Call a tool with retry logic for eventual consistency.
 async fn call_with_retry(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     tool_name: &str,
     payload: Value,
     max_retries: u32,
@@ -731,7 +725,7 @@ fn match_value(cell: &str, search: &str, operator: &str) -> bool {
 }
 
 /// Generate a dry-run preview of the steps a compound operation would take.
-fn dry_run_preview(tool_name: &str, payload: &Value) -> Value {
+pub fn dry_run_preview(tool_name: &str, payload: &Value) -> Value {
     match tool_name {
         "page_create_with_content" => json!({
             "compound": tool_name,

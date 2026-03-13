@@ -1,25 +1,20 @@
-use crate::client::{CodaClient, ToolCaller};
+use crate::client::ToolCaller;
 use crate::error::Result;
 use crate::output::{self, OutputFormat};
 use crate::trace;
 use serde_json::{json, Value};
 
 /// Call any tool by name with a JSON payload, print the result, and return it.
-/// Returns `Ok(Some(value))` on success, `Ok(None)` for dry-run, `Err` on failure.
+/// Returns `Ok(Some(value))` on success, `Err` on failure.
 /// The returned value is used by `--sync` to inspect the response for a `docUri`.
+/// Dry-run handling is done by the caller before reaching this function.
 pub async fn call(
-    client: &CodaClient,
+    client: &dyn ToolCaller,
     tool_name: &str,
     payload: Value,
-    dry_run: bool,
     pick: Option<&str>,
     format: OutputFormat,
 ) -> Result<Option<Value>> {
-    if dry_run {
-        output::print_response(&client.dry_run_tool(tool_name, &payload)?, format)?;
-        return Ok(None);
-    }
-
     trace::emit_request(tool_name, &payload);
     let start = std::time::Instant::now();
 

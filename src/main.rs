@@ -432,9 +432,20 @@ async fn dispatch_tool(
         }
     }
 
+    // Handle dry-run before dispatching to tools or compound operations
+    if dry_run {
+        if commands::compound::is_compound(&resolved_name) {
+            let preview = commands::compound::dry_run_preview(&resolved_name, &payload);
+            output::print_response(&preview, format)?;
+        } else {
+            output::print_response(&client.dry_run_tool(&resolved_name, &payload)?, format)?;
+        }
+        return Ok(());
+    }
+
     // Execute the tool and capture the result for --sync
     let result: Option<serde_json::Value> = if commands::compound::is_compound(&resolved_name) {
-        commands::compound::dispatch(client, &resolved_name, payload, dry_run, pick, format).await?
+        commands::compound::dispatch(client, &resolved_name, payload, pick, format).await?
     } else {
         // Client-side schema validation if cache available
         if let Ok(Some(cached)) = schema_cache::load() {
@@ -442,7 +453,7 @@ async fn dispatch_tool(
                 schema_cache::validate_payload(tool_schema, &payload)?;
             }
         }
-        commands::tools::call(client, &resolved_name, payload, dry_run, pick, format).await?
+        commands::tools::call(client, &resolved_name, payload, pick, format).await?
     };
 
     // Auto-sync: if --sync was passed and the result contains a docUri,
