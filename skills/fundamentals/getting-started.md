@@ -71,6 +71,12 @@ cat data.json | shd table_add_rows --json -
 
 `@file` is recommended for anything with nested JSON or special characters.
 
+## Useful Flags
+
+**`--polish`** sends content through Claude for grammar/style cleanup before writing to Coda. Requires `ANTHROPIC_API_KEY`. Non-fatal — if the key is missing or the API fails, original text is used.
+
+**`--fuzzy`** enables fuzzy matching for resource names in URIs, so you don't need exact IDs. Useful when you know a page/table name but not its ID.
+
 ## Safety Rules
 
 1. **Use `--dry-run` before mutations** to preview the request:

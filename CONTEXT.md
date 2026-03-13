@@ -143,5 +143,47 @@ shd doc_scaffold --json @blueprint.json --sync --pick docUri
 ## Skills Directory
 
 Detailed usage guides are in `skills/`:
-- `fundamentals/` — Getting started, discovering tools, sync and reading
+- `fundamentals/` — Getting started, discovering tools, sync and reading, error recovery
 - `workflows/` — Scaffolding docs, creating pages, summarizing, searching, row operations
+
+## Error Recovery
+
+### Compound Operations (doc_scaffold, page_create_with_content)
+
+Results include a `complete` field and an `errors` array:
+- `"complete": true` — all steps succeeded
+- `"complete": false` — some non-critical steps failed, check `errors[]`
+
+Each page in the result has a `status`: `"ok"`, `"partial"`, or `"failed"`.
+
+If errors occurred, the doc/page still exists. Retry only the failed parts:
+1. Read `errors[]` to identify what failed
+2. Use the individual tool (e.g., `content_modify`) to retry
+
+### Sync Status
+
+After sync, the manifest tracks status per doc:
+- `"status": "complete"` — all pages and tables synced
+- `"status": "partial"` — some items failed, re-sync with `--force`
+
+Sync uses atomic writes — `.coda/docs/<slug>/` is either fully synced or not present. Partial writes go to a temp directory and are promoted only on success.
+
+### Pagination
+
+Large results include `_pagination` metadata when truncated:
+```json
+{"items": [...], "_pagination": {"complete": false, "pagesFetched": 14, "error": "..."}}
+```
+
+When using `--pick` on a truncated result, a stderr warning is emitted.
+
+### Cache
+
+Tool schemas are cached for 24 hours. Force refresh: `shd discover --refresh`
+
+### Polish
+
+The `--polish` flag sends text through Claude for grammar/style cleanup before writing to Coda.
+- Requires `ANTHROPIC_API_KEY` environment variable
+- Non-fatal: if missing or API fails, original text is used with a stderr warning
+- Works with any tool that has a `content` field (20+ chars), plus specific support for `content_modify` and `doc_scaffold`

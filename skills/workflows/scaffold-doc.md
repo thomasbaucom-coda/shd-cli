@@ -115,7 +115,15 @@ When designing your blueprint:
 }
 ```
 
-Check the `errors` array — partial failures are reported here (e.g., a table created but rows failed to insert).
+Check the `complete` field and `errors` array:
+- `"complete": true` — all steps succeeded, `errors` is empty
+- `"complete": false` — the doc was created but some steps failed (e.g., content insertion or row creation)
+
+When `complete` is false, the doc still exists. Read `errors[]` to identify what failed, then retry with individual tools:
+```bash
+# Example: content for "Goals" page failed — retry with content_modify
+shd content_modify --json '{"uri": "coda://docs/AbCdEf/pages/goals", "operations": [...]}'
+```
 
 ## Gotchas
 
