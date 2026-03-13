@@ -108,15 +108,34 @@ pub fn print_picked(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Build a JSON object from picked paths and values.
+/// Uses the last segment of each path as key (e.g., "pages.0.title" → "title").
+/// When two paths have the same last segment, falls back to full dot-paths for all keys.
+pub fn build_picked_object(paths: &[&str], values: &[&Value]) -> Value {
+    let keys: Vec<&str> = paths
+        .iter()
+        .map(|p| p.rsplit('.').next().unwrap_or(p))
+        .collect();
+
+    // Detect collisions
+    let has_collision = {
+        let mut seen = std::collections::HashSet::new();
+        keys.iter().any(|k| !seen.insert(k))
+    };
+
+    let mut obj = serde_json::Map::new();
+    for (i, val) in values.iter().enumerate() {
+        let key = if has_collision { paths[i] } else { keys[i] };
+        obj.insert(key.to_string(), (*val).clone());
+    }
+    Value::Object(obj)
+}
+
 /// Print multiple picked values as a JSON object keyed by their path's last segment.
 /// Example: --pick "docUri,pages" → {"docUri": "...", "pages": [...]}
 pub fn print_picked_multi(paths: &[&str], values: &[&Value]) -> Result<()> {
-    let mut obj = serde_json::Map::new();
-    for (path, value) in paths.iter().zip(values.iter()) {
-        let key = path.rsplit('.').next().unwrap_or(path);
-        obj.insert(key.to_string(), (*value).clone());
-    }
-    println!("{}", serde_json::to_string_pretty(&Value::Object(obj))?);
+    let obj = build_picked_object(paths, values);
+    println!("{}", serde_json::to_string_pretty(&obj)?);
     Ok(())
 }
 
