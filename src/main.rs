@@ -28,24 +28,68 @@ const BANNER: &str = r#"
  |____/ \___/ \____|____/
 "#;
 
+fn print_welcome() {
+    let v = env!("CARGO_PKG_VERSION");
+    let w = 45; // inner width between │ markers
+    let title = format!("      ●      Superhuman Docs CLI  v{v}");
+    let sub   = "     ╱ ╲     agent-first interface for Coda";
+    let arrow = "    ╱   ╲";
+    let blank = "";
+    eprint!(
+        "\
+╭{bar}╮
+│{blank:<w$}│
+│{title:<w$}│
+│{sub:<w$}│
+│{arrow:<w$}│
+│{blank:<w$}│
+╰{bar}╯
+
+  Get started:
+    shd auth login                  Authenticate with Coda
+    shd discover                    List all available tools
+    shd <tool> --json '{{...}}'       Call any tool
+    shd --help                      Full usage & options
+",
+        bar = "─".repeat(w),
+    );
+}
+
+const HELP_TEMPLATE: &str = concat!(
+    r#"
+  ____  _   _ ____  _____ ____  _   _ _   _ __  __    _    _   _
+ / ___|| | | |  _ \| ____|  _ \| | | | | | |  \/  |  / \  | \ | |
+ \___ \| | | | |_) |  _| | |_) | |_| | | | | |\/| | / _ \ |  \| |
+  ___) | |_| |  __/| |___|  _ <|  _  | |_| | |  | |/ ___ \| |\  |
+ |____/ \___/|_|   |_____|_| \_\_| |_|\___/|_|  |_/_/   \_\_| \_|
+  ____   ___   ____ ____
+ |  _ \ / _ \ / ___/ ___|
+ | | | | | | | |   \___ \
+ | |_| | |_| | |___ ___) |
+ |____/ \___/ \____|____/
+"#,
+    "  agent-first interface for Coda — v{version}\n\n",
+    "{about-with-newline}\n",
+    "{usage-heading} {usage}\n\n",
+    "{all-args}",
+    "{after-help}",
+);
+
 #[derive(Parser)]
 #[command(
     name = "shd",
     version,
-    about = "Superhuman Docs CLI — agent-first interface for Coda",
-    before_help = BANNER,
-    long_about = "All commands call the Coda tool endpoint dynamically.\n\
-                  Tools are discovered at runtime — new tools work without a CLI rebuild.\n\
-                  Run `shd discover` to see available tools and their schemas.\n\n\
-                  Auth: set CODA_API_TOKEN or run `shd auth login`.",
-    after_help = "TOOL USAGE:\n  \
-                  shd <tool_name> --json '{...}'                    Call any tool\n  \
-                  shd table_create --json '{\"docId\":\"...\",\"canvasId\":\"...\",\"name\":\"...\",\"columns\":[...]}'\n  \
-                  shd whoami                                        No payload needed\n  \
-                  shd discover                                      List all tools\n  \
-                  shd discover table_create                         Show tool schema\n  \
-                  echo '{...}' | shd table_add_rows --json -        Read payload from stdin\n  \
-                  shd content_modify --json @payload.json           Read payload from file"
+    about = "Tools are discovered at runtime — new tools work without a CLI rebuild.\n\
+             Run `shd discover` to see available tools and their schemas.\n\
+             Auth: set CODA_API_TOKEN or run `shd auth login`.",
+    help_template = HELP_TEMPLATE,
+    after_help = "\nExamples:\n  \
+                  shd <tool_name> --json '{...}'               Call any tool\n  \
+                  shd whoami                                    No payload needed\n  \
+                  shd discover                                  List all tools\n  \
+                  shd discover table_create                     Show tool schema\n  \
+                  echo '{...}' | shd table_add_rows --json -    Read payload from stdin\n  \
+                  shd content_modify --json @payload.json       Read payload from file"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -166,6 +210,12 @@ enum AuthAction {
 
 #[tokio::main]
 async fn main() {
+    // No arguments → show the compact welcome screen instead of full --help
+    if std::env::args_os().len() == 1 {
+        print_welcome();
+        std::process::exit(0);
+    }
+
     let cli = Cli::parse();
 
     let result = run(cli).await;
