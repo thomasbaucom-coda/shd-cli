@@ -803,6 +803,8 @@ fn plural(n: usize, singular: &str) -> String {
 // Retry helper (same pattern as compound.rs)
 // ---------------------------------------------------------------------------
 
+/// Call a tool with retry logic. Only retries on transient errors (429/5xx/network).
+/// Allows extra retries for 409 (doc not ready after creation) with longer delays.
 async fn call_with_retry(
     client: &dyn ToolCaller,
     tool_name: &str,
@@ -813,28 +815,32 @@ async fn call_with_retry(
     // Allow extra retries for 409 (doc not ready after creation)
     let effective_retries = max_retries + 2;
     for attempt in 0..=effective_retries {
-        if attempt > 0 {
-            // Use longer delay for 409 (doc not ready yet)
-            let base_ms = if matches!(&last_err, Some(CodaError::Api { status: 409, .. })) {
-                3000
-            } else {
-                1000
-            };
-            let delay = std::time::Duration::from_millis(base_ms * attempt as u64);
-            output::info(&format!(
-                "[sync] Retrying {} (attempt {}/{})...\n",
-                tool_name, attempt, effective_retries
-            ));
-            tokio::time::sleep(delay).await;
-        }
         match client.call_tool(tool_name, payload.clone()).await {
             Ok(result) => return Ok(result),
             Err(e) => {
+                if !e.is_retriable() || attempt == effective_retries {
+                    return Err(e);
+                }
+                // Use longer delay for 409 (doc not ready yet)
+                let base_ms = if matches!(&e, CodaError::Api { status: 409, .. }) {
+                    3000
+                } else {
+                    1000
+                };
+                let delay = base_ms * (attempt as u64 + 1);
+                output::info(&format!(
+                    "[sync] Retrying {} (attempt {}/{}): {}. Retrying in {delay}ms...\n",
+                    tool_name,
+                    attempt + 1,
+                    effective_retries,
+                    e,
+                ));
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 last_err = Some(e);
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| CodaError::Other("Retry exhausted".into())))
+    Err(last_err.unwrap())
 }
 
 #[cfg(test)]

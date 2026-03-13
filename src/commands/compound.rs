@@ -690,6 +690,8 @@ fn unwrap_cell(cell: &Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// Call a tool with retry logic for eventual consistency.
+/// Only retries on transient errors (429/5xx/network). Non-retriable errors
+/// (400/401/403/404, validation, etc.) fail immediately.
 async fn call_with_retry(
     client: &dyn ToolCaller,
     tool_name: &str,
@@ -698,18 +700,23 @@ async fn call_with_retry(
 ) -> Result<Value> {
     let mut last_err = None;
     for attempt in 0..=max_retries {
-        if attempt > 0 {
-            let delay = std::time::Duration::from_millis(1000 * attempt as u64);
-            tokio::time::sleep(delay).await;
-        }
         match client.call_tool(tool_name, payload.clone()).await {
             Ok(result) => return Ok(result),
             Err(e) => {
+                if !e.is_retriable() || attempt == max_retries {
+                    return Err(e);
+                }
+                let delay = 1000 * (attempt as u64 + 1);
+                output::info(&format!(
+                    "[retry] {tool_name} attempt {}/{max_retries}: {e}. Retrying in {delay}ms...\n",
+                    attempt + 1
+                ));
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 last_err = Some(e);
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| CodaError::Other("Retry exhausted".into())))
+    Err(last_err.unwrap())
 }
 
 /// Match a cell value against a search value using the given operator.
