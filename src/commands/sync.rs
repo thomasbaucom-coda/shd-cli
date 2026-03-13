@@ -196,6 +196,45 @@ struct SyncStats {
 }
 
 // ---------------------------------------------------------------------------
+// Atomic sync helpers
+// ---------------------------------------------------------------------------
+
+/// Three-phase directory promotion: backup existing, move tmp to final, clean up backup.
+/// On failure to move tmp, restores from backup so the old data is preserved.
+fn promote_sync_dir(tmp_dir: &Path, final_dir: &Path) -> crate::error::Result<()> {
+    let backup_dir = tmp_dir.parent().unwrap().join(format!(
+        "{}_old",
+        tmp_dir.file_name().unwrap().to_string_lossy()
+    ));
+
+    // Phase 1: Move existing to backup
+    if final_dir.exists() {
+        std::fs::rename(final_dir, &backup_dir).map_err(|e| {
+            crate::error::CodaError::Other(format!("Failed to backup existing dir: {e}"))
+        })?;
+    }
+
+    // Phase 2: Move tmp to final
+    std::fs::create_dir_all(final_dir.parent().unwrap())?;
+    if let Err(e) = std::fs::rename(tmp_dir, final_dir) {
+        // Restore backup on failure
+        if backup_dir.exists() {
+            let _ = std::fs::rename(&backup_dir, final_dir);
+        }
+        return Err(crate::error::CodaError::Other(format!(
+            "Failed to promote sync dir: {e}"
+        )));
+    }
+
+    // Phase 3: Clean up backup
+    if backup_dir.exists() {
+        let _ = std::fs::remove_dir_all(&backup_dir);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Core sync logic
 // ---------------------------------------------------------------------------
 
@@ -244,11 +283,91 @@ async fn sync_document(
 
     stats.doc_title = doc_name.to_string();
 
-    // Create doc directory
+    // Final destination for this doc
     let doc_dir = docs_dir.join(&doc_slug);
-    std::fs::create_dir_all(&doc_dir)?;
     stats.doc_dir = doc_dir.clone();
 
+    // Use a temp directory for atomic writes: root/.sync_tmp/<slug>/
+    let root = docs_dir.parent().unwrap();
+    let sync_tmp_root = root.join(".sync_tmp");
+    let sync_tmp_dir = sync_tmp_root.join(&doc_slug);
+
+    // Concurrent sync guard: fail if another sync is already in progress
+    if sync_tmp_dir.exists() {
+        return Err(CodaError::Other(format!(
+            "Sync already in progress for '{}'. If this is stale, delete {} and retry.",
+            doc_slug,
+            sync_tmp_dir.display()
+        )));
+    }
+
+    std::fs::create_dir_all(&sync_tmp_dir)?;
+
+    // Write into the temp dir; on failure, clean up and mark partial
+    let result = sync_document_inner(
+        client,
+        opts,
+        &sync_tmp_dir,
+        &mut stats,
+        &doc_meta,
+        doc_name,
+        &doc_result,
+    )
+    .await;
+
+    match result {
+        Ok(()) => {
+            // Promote temp dir to final location atomically
+            promote_sync_dir(&sync_tmp_dir, &doc_dir)?;
+
+            // Update manifest with success
+            manifest.docs.insert(
+                opts.doc_uri.clone(),
+                ManifestDocEntry {
+                    slug: doc_slug,
+                    title: doc_name.to_string(),
+                    synced_at: now_rfc3339(),
+                    page_count: stats.pages_synced,
+                    table_count: stats.tables_synced,
+                    status: "complete".to_string(),
+                },
+            );
+        }
+        Err(e) => {
+            // Clean up temp dir on failure
+            let _ = std::fs::remove_dir_all(&sync_tmp_dir);
+
+            // Record partial status in manifest
+            manifest.docs.insert(
+                opts.doc_uri.clone(),
+                ManifestDocEntry {
+                    slug: doc_slug,
+                    title: doc_name.to_string(),
+                    synced_at: now_rfc3339(),
+                    page_count: stats.pages_synced,
+                    table_count: stats.tables_synced,
+                    status: "partial".to_string(),
+                },
+            );
+
+            return Err(e);
+        }
+    }
+
+    Ok(stats)
+}
+
+/// Inner sync logic that writes all files into the given directory.
+/// Separated so the caller can handle atomic promotion and cleanup.
+async fn sync_document_inner(
+    client: &dyn ToolCaller,
+    opts: &SyncOpts,
+    doc_dir: &Path,
+    stats: &mut SyncStats,
+    doc_meta: &Value,
+    doc_name: &str,
+    doc_result: &Value,
+) -> Result<()> {
     // Write trimmed __doc.json (only non-null essential fields)
     let mut doc_json = serde_json::Map::new();
     doc_json.insert("title".into(), json!(doc_name));
@@ -319,7 +438,7 @@ async fn sync_document(
 
     // Generate CONTEXT.md
     write_context_md(
-        &doc_dir,
+        doc_dir,
         doc_name,
         &opts.doc_uri,
         &page_details,
@@ -333,20 +452,7 @@ async fn sync_document(
         &serde_json::to_value(&doc_sync)?,
     )?;
 
-    // Update manifest
-    manifest.docs.insert(
-        opts.doc_uri.clone(),
-        ManifestDocEntry {
-            slug: doc_slug,
-            title: doc_name.to_string(),
-            synced_at: now_rfc3339(),
-            page_count: stats.pages_synced,
-            table_count: stats.tables_synced,
-            status: "complete".to_string(),
-        },
-    );
-
-    Ok(stats)
+    Ok(())
 }
 
 /// Sync a single page. Returns (pages_synced, tables_synced, rows_synced, PageDetail).
@@ -757,11 +863,19 @@ fn load_manifest(root: &Path) -> Result<SyncManifest> {
         });
     }
     let contents = std::fs::read_to_string(&path)?;
-    let manifest: SyncManifest = serde_json::from_str(&contents).unwrap_or(SyncManifest {
-        version: 1,
-        ..Default::default()
-    });
-    Ok(manifest)
+    match serde_json::from_str(&contents) {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            output::info(&format!(
+                "[sync] Warning: manifest corrupted ({}). Treating as fresh sync.\n",
+                e
+            ));
+            Ok(SyncManifest {
+                version: 1,
+                ..Default::default()
+            })
+        }
+    }
 }
 
 fn save_manifest(root: &Path, manifest: &SyncManifest) -> Result<()> {
@@ -1077,5 +1191,60 @@ mod tests {
         let manifest: SyncManifest = serde_json::from_str(json).unwrap();
         let entry = &manifest.docs["coda://docs/abc"];
         assert_eq!(entry.status, "complete");
+    }
+
+    #[test]
+    fn promote_sync_dir_moves_tmp_to_final() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let sync_tmp = root.join(".sync_tmp").join("test-doc");
+        let docs_dir = root.join("docs").join("test-doc");
+
+        std::fs::create_dir_all(&sync_tmp).unwrap();
+        std::fs::write(sync_tmp.join("test.md"), "hello").unwrap();
+
+        promote_sync_dir(&sync_tmp, &docs_dir).unwrap();
+
+        assert!(!sync_tmp.exists());
+        assert!(docs_dir.join("test.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(docs_dir.join("test.md")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn promote_sync_dir_replaces_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let sync_tmp = root.join(".sync_tmp").join("test-doc");
+        let docs_dir = root.join("docs").join("test-doc");
+
+        // Create existing final dir with old content
+        std::fs::create_dir_all(&docs_dir).unwrap();
+        std::fs::write(docs_dir.join("old.md"), "old data").unwrap();
+
+        // Create tmp dir with new content
+        std::fs::create_dir_all(&sync_tmp).unwrap();
+        std::fs::write(sync_tmp.join("new.md"), "new data").unwrap();
+
+        promote_sync_dir(&sync_tmp, &docs_dir).unwrap();
+
+        assert!(!sync_tmp.exists());
+        assert!(!docs_dir.join("old.md").exists());
+        assert!(docs_dir.join("new.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(docs_dir.join("new.md")).unwrap(),
+            "new data"
+        );
+    }
+
+    #[test]
+    fn corrupted_manifest_treated_as_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_path = tmp.path().join(".sync_manifest.json");
+        std::fs::write(&manifest_path, "not valid json{{{").unwrap();
+        let manifest = load_manifest(tmp.path()).unwrap();
+        assert!(manifest.docs.is_empty());
     }
 }
