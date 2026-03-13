@@ -137,6 +137,12 @@ struct ManifestDocEntry {
     synced_at: String,
     page_count: usize,
     table_count: usize,
+    #[serde(default = "default_status")]
+    status: String,
+}
+
+fn default_status() -> String {
+    "complete".to_string()
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -336,6 +342,7 @@ async fn sync_document(
             synced_at: now_rfc3339(),
             page_count: stats.pages_synced,
             table_count: stats.tables_synced,
+            status: "complete".to_string(),
         },
     );
 
@@ -865,6 +872,7 @@ mod tests {
                 synced_at: now_rfc3339(),
                 page_count: 3,
                 table_count: 1,
+                status: "complete".to_string(),
             },
         );
 
@@ -1021,6 +1029,7 @@ mod tests {
                 synced_at: now_rfc3339(),
                 page_count: 5,
                 table_count: 2,
+                status: "complete".to_string(),
             },
         );
         manifest.docs.insert(
@@ -1031,6 +1040,7 @@ mod tests {
                 synced_at: now_rfc3339(),
                 page_count: 3,
                 table_count: 1,
+                status: "complete".to_string(),
             },
         );
 
@@ -1059,5 +1069,13 @@ mod tests {
 
         let content = std::fs::read_to_string(root.join("INDEX.md")).unwrap();
         assert!(content.contains("No docs synced yet"));
+    }
+
+    #[test]
+    fn manifest_missing_status_defaults_to_complete() {
+        let json = r#"{"version":1,"synced_at":"2026-01-01T00:00:00Z","docs":{"coda://docs/abc":{"slug":"test","title":"Test","synced_at":"2026-01-01T00:00:00Z","page_count":1,"table_count":0}}}"#;
+        let manifest: SyncManifest = serde_json::from_str(json).unwrap();
+        let entry = &manifest.docs["coda://docs/abc"];
+        assert_eq!(entry.status, "complete");
     }
 }
