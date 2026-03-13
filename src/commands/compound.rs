@@ -170,14 +170,15 @@ async fn page_create_with_content(client: &dyn ToolCaller, payload: Value) -> Re
         "page_create",
         &create_payload,
     );
-    let page_result = client.call_tool("page_create", create_payload).await?;
+    let mut page_result = client.call_tool("page_create", create_payload).await?;
 
     let canvas_uri = page_result
         .get("canvasUri")
         .and_then(|v| v.as_str())
         .ok_or_else(|| CodaError::Other("page_create did not return canvasUri".into()))?;
 
-    // Step 2: Insert content (if provided)
+    // Step 2: Insert content (if provided) — non-critical, collect errors
+    let mut errors: Vec<String> = Vec::new();
     if let Some(md) = content {
         let content_payload = json!({
             "uri": canvas_uri,
@@ -194,17 +195,24 @@ async fn page_create_with_content(client: &dyn ToolCaller, payload: Value) -> Re
             "content_modify",
             &content_payload,
         );
-        call_with_retry(client, "content_modify", content_payload, 3).await?;
-    }
-
-    // Return page metadata with content confirmation
-    let mut result = page_result;
-    if content.is_some() {
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("contentWritten".into(), json!(true));
+        match call_with_retry(client, "content_modify", content_payload, 3).await {
+            Ok(_) => {
+                if let Some(obj) = page_result.as_object_mut() {
+                    obj.insert("contentWritten".into(), json!(true));
+                }
+            }
+            Err(e) => {
+                errors.push(format!("content_modify: {}", e));
+            }
         }
     }
-    Ok(result)
+
+    let is_complete = errors.is_empty();
+    if let Some(obj) = page_result.as_object_mut() {
+        obj.insert("complete".into(), json!(is_complete));
+        obj.insert("errors".into(), json!(errors));
+    }
+    Ok(page_result)
 }
 
 /// Create a complete document from a blueprint.
@@ -261,6 +269,7 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
             .unwrap_or("Untitled");
 
         // For the first page, rename it; for subsequent pages, create new
+        // Page creation is CRITICAL — failure aborts the entire scaffold.
         let (canvas_uri, page_uri) = if i == 0 {
             if let Some(ref fp_uri) = first_page_uri {
                 let mut update_fields = json!({"title": page_title});
@@ -280,23 +289,17 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
             }
             trace::emit_compound_step("doc_scaffold", step, "page_create", &create_payload);
             step += 1;
-            match client.call_tool("page_create", create_payload).await {
-                Ok(result) => {
-                    let cu = result
-                        .get("canvasUri")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let pu = result
-                        .get("pageUri")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    (cu, pu)
-                }
-                Err(e) => {
-                    errors.push(format!("Page '{}': {}", page_title, e));
-                    continue;
-                }
-            }
+            // Page creation is critical — fail fast
+            let result = client.call_tool("page_create", create_payload).await?;
+            let cu = result
+                .get("canvasUri")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let pu = result
+                .get("pageUri")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (cu, pu)
         };
 
         let c_uri = match canvas_uri {
@@ -307,13 +310,10 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
             }
         };
 
-        created_pages.push(json!({
-            "title": page_title,
-            "canvasUri": &c_uri,
-            "pageUri": page_uri,
-        }));
+        // Track per-page errors to determine page status
+        let mut page_has_error = false;
 
-        // Insert content if provided
+        // Insert content if provided (non-critical — collect errors)
         if let Some(content) = page_spec.get("content").and_then(|v| v.as_str()) {
             let content_payload = json!({
                 "uri": &c_uri,
@@ -323,10 +323,11 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
             step += 1;
             if let Err(e) = call_with_retry(client, "content_modify", content_payload, 3).await {
                 errors.push(format!("Content for '{}': {}", page_title, e));
+                page_has_error = true;
             }
         }
 
-        // Create tables if specified
+        // Create tables if specified (non-critical — collect errors)
         if let Some(tables) = page_spec.get("tables").and_then(|v| v.as_array()) {
             for table_spec in tables {
                 let table_name = table_spec
@@ -405,6 +406,7 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
                                     }
                                     Err(e) => {
                                         errors.push(format!("Rows for '{}': {}", table_name, e));
+                                        page_has_error = true;
                                     }
                                 }
                             }
@@ -418,25 +420,31 @@ async fn doc_scaffold(client: &dyn ToolCaller, payload: Value) -> Result<Value> 
                     }
                     Err(e) => {
                         errors.push(format!("Table '{}': {}", table_name, e));
+                        page_has_error = true;
                     }
                 }
             }
         }
+
+        let page_status = if page_has_error { "partial" } else { "ok" };
+        created_pages.push(json!({
+            "title": page_title,
+            "canvasUri": &c_uri,
+            "pageUri": page_uri,
+            "status": page_status,
+        }));
     }
 
-    let mut result = json!({
+    let is_complete = errors.is_empty();
+    Ok(json!({
         "docUri": &doc_uri,
         "browserLink": doc_result.get("browserLink").cloned().unwrap_or(Value::Null),
         "pages": created_pages,
         "tables": created_tables,
         "totalRows": total_rows,
-    });
-
-    if !errors.is_empty() {
-        result["errors"] = json!(errors);
-    }
-
-    Ok(result)
+        "errors": errors,
+        "complete": is_complete,
+    }))
 }
 
 /// Read a document and return a condensed summary.
