@@ -37,5 +37,9 @@ comfy-table = "7"
 inherits = "release"
 lto = "thin"
 
+[features]
+default = []
+integration = []
+
 [dev-dependencies]
 tempfile = "3"
