@@ -69,6 +69,8 @@ trait ToolCaller {
 
 Functions in `commands/` that currently take `&CodaClient` will take `&dyn ToolCaller` instead.
 
+**Note on `dry_run_tool`:** The `dry_run_tool` method is NOT part of the `ToolCaller` trait — it's specific to `CodaClient`. Dry-run is handled at the CLI dispatch layer in `main.rs` before calling into trait-based command functions. This keeps the trait minimal.
+
 ### 1.3 Live Integration Tests
 
 Behind `#[cfg(feature = "integration")]`. Require `CODA_API_TOKEN` env var. Use a dedicated test doc (created once, reused). Run with `cargo test --features integration`.
@@ -78,6 +80,10 @@ Tests:
 - `discover` returns tools with `inputSchema`
 - Create doc, sync it, verify filesystem, delete doc
 - Pagination: read a table with 100+ rows, verify all returned
+- `doc_scaffold` end-to-end: create doc with pages/tables, verify structure, delete
+- `page_create_with_content` end-to-end: add page to existing doc, verify content
+- `table_search` against a table with known data
+- Error handling: call a non-existent tool, verify structured error response
 
 ---
 
@@ -87,18 +93,9 @@ Tests:
 
 **Current behavior:** On page N failure, logs to stderr and returns pages 1..N-1. With `--quiet`, the warning is suppressed entirely.
 
-**New behavior:** Return a `PaginatedResult` that makes truncation explicit:
+**New behavior:** Enrich the returned `Value` with pagination metadata inline. The `call_tool` return type stays `Result<Value>` — no signature change needed. Internally, `auto_paginate` uses a helper struct to track state, then embeds `_pagination` into the final JSON value before returning.
 
-```rust
-struct PaginatedResult {
-    items: Vec<Value>,
-    total_pages_fetched: usize,
-    is_complete: bool,
-    truncation_error: Option<String>,
-}
-```
-
-When `is_complete` is false, the JSON output includes:
+When pagination is incomplete, the JSON output includes:
 
 ```json
 {
@@ -111,11 +108,17 @@ When `is_complete` is false, the JSON output includes:
 }
 ```
 
+When `--pick` is used on a truncated result, emit a stderr warning:
+`[paginate] Warning: result was truncated. Use --pick _pagination to see details.`
+
+**Retry selectivity:** Only retry on retriable errors (429 rate limit, 5xx server errors, network timeouts). Do NOT retry 400 (bad request), 401 (unauthorized), 403 (forbidden), or 404 (not found) — these waste time and confuse agents.
+
 **Tests:**
 - Pagination completes normally (3 pages, all succeed)
 - Pagination fails on page 2 of 3 (returns page 1 items + truncation metadata)
 - Single page (no pagination needed)
 - Empty result set
+- Non-retriable error (400) is not retried
 
 ---
 
@@ -161,6 +164,10 @@ All compound operations return a consistent shape:
 
 The `complete` field is `true` only when `errors` is empty. Agents can check this single field.
 
+The per-page `status` reflects the full outcome for that page (creation + content + tables). If page creation succeeded but content insertion failed, status is `"partial"` with an `error` field explaining what failed. If page creation itself failed, status is `"failed"`.
+
+**Retry selectivity:** Same as pagination — only retry 429/5xx/network errors. 400/401/403/404 fail immediately.
+
 ### 3.3 Tests
 
 - `doc_scaffold` all steps succeed → `complete: true`, empty `errors`
@@ -186,15 +193,22 @@ Sync flow:
 1. Create .coda/.sync_tmp/<slug>/
 2. Write all pages, tables, rows to temp
 3. If all succeed:
-   a. Remove old .coda/docs/<slug>/ if exists
-   b. Rename .coda/.sync_tmp/<slug>/ → .coda/docs/<slug>/
-   c. Update manifest with status: "complete"
-4. If any fail:
+   a. Rename old .coda/docs/<slug>/ → .coda/.sync_old/<slug>/  (atomic, preserves old data)
+   b. Rename .coda/.sync_tmp/<slug>/ → .coda/docs/<slug>/      (atomic)
+   c. Delete .coda/.sync_old/<slug>/                            (cleanup, safe to fail)
+   d. Update manifest with status: "complete"
+4. If step 3b fails (rename to final location):
+   a. Rename .coda/.sync_old/<slug>/ back to .coda/docs/<slug>/ (restore old data)
+   b. Clean up .coda/.sync_tmp/<slug>/
+   c. Return error
+5. If any page/table fetch fails during step 2:
    a. Clean up .coda/.sync_tmp/<slug>/
    b. Update manifest with status: "partial", record which pages/tables succeeded
    c. Return error with details
-5. Update INDEX.md
+6. Update INDEX.md
 ```
+
+This three-phase rename ensures that if the process crashes between removing old and placing new, the old data is recoverable from `.sync_old/`.
 
 ### 4.2 Manifest Status Tracking
 
@@ -215,6 +229,8 @@ Sync flow:
 ```
 
 A `"status": "partial"` entry means the agent should re-sync with `--force`.
+
+**Backward compatibility:** Existing `__sync.json` files from before this change will not have a `status` field. The code must default missing `status` to `"complete"` so pre-existing syncs are treated as valid.
 
 ### 4.3 Corrupted Manifest Recovery
 
@@ -270,14 +286,13 @@ When two paths resolve to the same key (e.g., `pages.0.title` and `pages.1.title
 
 Only triggers when there's an actual collision. Single-segment keys stay as-is.
 
-### 5.4 Sanitize Pattern Tightening
+The collision detection belongs in `output::print_picked_multi` (not in `pick_fields`), since that's where keys are assembled from paths.
+
+### 5.4 Sanitize Pattern Review
 
 **File:** `src/sanitize.rs`
 
-Tighten greedy patterns:
-- `"ignore all previous"` → `"ignore all previous instructions"` or `"ignore all previous commands"`
-- `"disregard"` → `"disregard all"` or `"disregard the above"`
-- Keep broad patterns for obvious attacks (`</system>`, `<|im_start|>`)
+Review needed: the current patterns may already be sufficiently specific (e.g., `"disregard all previous"` not just `"disregard"`). Verify each pattern against the actual code before changing. Only tighten patterns that demonstrably match legitimate text. Keep broad patterns for obvious attacks (`</system>`, `<|im_start|>`).
 
 ---
 
@@ -288,6 +303,8 @@ Tighten greedy patterns:
 - **Error recovery section**: What to do when `errors[]` is non-empty, when `complete: false`, when sync status is `"partial"`
 - **Cache TTL**: Mention 24h TTL, how to force refresh
 - **Polish requirements**: Needs `ANTHROPIC_API_KEY`, non-fatal if missing
+- **Output format note**: `--output table` is suboptimal for compound results (nested arrays render as `[3 items]`). Recommend `--output json` for compound operations in documentation.
+- **`--quiet` and pagination**: When `--quiet` is set and pagination truncates, the `_pagination` metadata in JSON is the only signal. This is correct behavior — document it.
 
 ### 6.2 Skills Updates
 
