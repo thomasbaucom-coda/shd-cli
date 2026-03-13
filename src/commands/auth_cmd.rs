@@ -2,7 +2,6 @@ use crate::auth;
 use crate::client::{CodaClient, ToolCaller};
 use crate::error::Result;
 
-const TOKEN_URL: &str = "https://coda.io/account#apiSettings";
 const MCP_TOKEN_URL: &str =
     "https://coda.io/account?openDialog=CREATE_API_TOKEN&scopeType=mcp#apiSettings";
 
