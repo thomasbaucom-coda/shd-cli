@@ -75,7 +75,17 @@ fn collect_polish_paths(tool_name: &str, payload: &Value) -> Vec<String> {
             }
         }
         "doc_scaffold" => collect_doc_scaffold_paths(payload),
-        _ => vec![],
+        _ => {
+            if payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map_or(false, |s| s.len() >= MIN_POLISH_LEN)
+            {
+                vec!["/content".to_string()]
+            } else {
+                vec![]
+            }
+        }
     }
 }
 
@@ -256,6 +266,27 @@ mod tests {
         assert!(collect_polish_paths("whoami", &payload).is_empty());
         assert!(collect_polish_paths("table_create", &payload).is_empty());
         assert!(collect_polish_paths("page_create", &payload).is_empty());
+    }
+
+    #[test]
+    fn paths_generic_content_field() {
+        let payload = json!({"uri": "coda://docs/abc", "content": "Some long enough content to be polished here"});
+        let paths = collect_polish_paths("some_unknown_tool", &payload);
+        assert_eq!(paths, vec!["/content"]);
+    }
+
+    #[test]
+    fn paths_generic_no_content_field() {
+        let payload = json!({"uri": "coda://docs/abc", "title": "Short"});
+        let paths = collect_polish_paths("some_unknown_tool", &payload);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn paths_generic_short_content_skipped() {
+        let payload = json!({"content": "Too short"});
+        let paths = collect_polish_paths("unknown_tool", &payload);
+        assert!(paths.is_empty());
     }
 
     #[test]
