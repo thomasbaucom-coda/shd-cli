@@ -79,7 +79,7 @@ fn collect_polish_paths(tool_name: &str, payload: &Value) -> Vec<String> {
             if payload
                 .get("content")
                 .and_then(|v| v.as_str())
-                .map_or(false, |s| s.len() >= MIN_POLISH_LEN)
+                .is_some_and(|s| s.len() >= MIN_POLISH_LEN)
             {
                 vec!["/content".to_string()]
             } else {

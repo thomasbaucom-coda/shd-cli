@@ -228,7 +228,7 @@ fn compact_type(prop: &serde_json::Value) -> String {
     let semantic_hint = prop
         .get("description")
         .and_then(|d| d.as_str())
-        .and_then(|d| infer_semantic_type(d));
+        .and_then(infer_semantic_type);
     // Handle anyOf / oneOf (union types)
     if let Some(any_of) = prop.get("anyOf").or_else(|| prop.get("oneOf")) {
         if let Some(variants) = any_of.as_array() {
