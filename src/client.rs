@@ -210,11 +210,15 @@ impl CodaClient {
 
     /// Follow pagination tokens to collect all pages into a single result.
     /// Merges `items` arrays from subsequent pages into the first result.
-    /// Stops after 50 pages as a safety limit.
+    /// Stops after 50 pages as a safety limit. When truncated, adds `_pagination`
+    /// metadata so agents know the result is incomplete.
     async fn auto_paginate(&self, tool_name: &str, original_payload: &Value, result: &mut Value) {
         const MAX_PAGES: usize = 50;
 
-        let mut page_count = 0usize;
+        let mut pages_fetched = 1usize; // first page already fetched
+        let mut is_complete = true;
+        let mut truncation_error: Option<String> = None;
+
         loop {
             let token = result
                 .get("nextPageToken")
@@ -226,8 +230,9 @@ impl CodaClient {
                 _ => break,
             };
 
-            page_count += 1;
-            if page_count >= MAX_PAGES {
+            if pages_fetched >= MAX_PAGES {
+                is_complete = false;
+                truncation_error = Some(format!("Stopped after {MAX_PAGES} pages (safety limit)"));
                 crate::output::info(&format!(
                     "[paginate] Stopped after {MAX_PAGES} pages. Results may be partial.\n"
                 ));
@@ -242,13 +247,17 @@ impl CodaClient {
 
             let next_result = match self.call_tool_single(tool_name, next_payload).await {
                 Ok(r) => r,
-                Err(_) => {
+                Err(e) => {
+                    is_complete = false;
+                    truncation_error = Some(format!("Page {} failed: {}", pages_fetched + 1, e));
                     crate::output::info(
                         "[paginate] Error fetching next page. Results may be partial.\n",
                     );
                     break;
                 }
             };
+
+            pages_fetched += 1;
 
             // Merge items arrays
             if let Some(next_items) = next_result.get("items").and_then(|v| v.as_array()) {
@@ -275,11 +284,14 @@ impl CodaClient {
         }
 
         // Clean up the token from final result — agent doesn't need it
-        if page_count > 0 {
+        if pages_fetched > 1 {
             if let Some(obj) = result.as_object_mut() {
                 obj.remove("nextPageToken");
             }
         }
+
+        // Add truncation metadata if pagination was incomplete
+        add_pagination_metadata(result, pages_fetched, is_complete, truncation_error);
     }
 
     /// Single-page tool call (no auto-pagination). Used internally by auto_paginate.
@@ -381,6 +393,29 @@ impl ToolCaller for CodaClient {
 
     async fn fetch_tools(&self) -> Result<Vec<Value>> {
         self.fetch_tools_impl().await
+    }
+}
+
+/// Annotate a result with pagination metadata when auto-pagination is incomplete.
+/// When `is_complete` is true, no metadata is added (clean result).
+fn add_pagination_metadata(
+    result: &mut Value,
+    pages_fetched: usize,
+    is_complete: bool,
+    error: Option<String>,
+) {
+    if is_complete {
+        return;
+    }
+    let mut meta = serde_json::json!({
+        "complete": false,
+        "pagesFetched": pages_fetched,
+    });
+    if let Some(err_msg) = error {
+        meta["error"] = Value::String(err_msg);
+    }
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("_pagination".to_string(), meta);
     }
 }
 
@@ -499,5 +534,24 @@ mod tests {
             .and_then(|t| t.as_str())
             .filter(|s| !s.is_empty());
         assert!(token.is_none(), "missing token should be None");
+    }
+
+    #[test]
+    fn pagination_metadata_added_on_truncation() {
+        let mut result = json!({"items": [{"id": 1}], "nextPageToken": "abc"});
+        add_pagination_metadata(&mut result, 1, false, Some("Page 2 failed: timeout".into()));
+        assert_eq!(result["_pagination"]["complete"], false);
+        assert_eq!(result["_pagination"]["pagesFetched"], 1);
+        assert!(result["_pagination"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Page 2"));
+    }
+
+    #[test]
+    fn pagination_metadata_not_added_when_complete() {
+        let mut result = json!({"items": [{"id": 1}]});
+        add_pagination_metadata(&mut result, 3, true, None);
+        assert!(result.get("_pagination").is_none());
     }
 }

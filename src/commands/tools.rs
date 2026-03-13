@@ -24,6 +24,9 @@ pub async fn call(
     match result {
         Ok(ref value) => {
             trace::emit_response(tool_name, value, elapsed_ms, false);
+            if value.get("_pagination").is_some() {
+                output::info("[paginate] Warning: result was truncated. Use --pick _pagination to see details.\n");
+            }
             if let Some(paths) = pick {
                 pick_fields(value, paths)?;
             } else {
