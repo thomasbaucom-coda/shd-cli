@@ -1,20 +1,15 @@
-mod auth;
-mod cell;
-mod client;
-mod commands;
-mod error;
-mod fuzzy;
-mod output;
-mod polish;
-mod sanitize;
-mod schema_cache;
-mod slug;
-mod trace;
-mod validate;
-
 use clap::{Parser, Subcommand};
-use client::ToolCaller;
-use output::OutputFormat;
+use coda_cli::auth;
+use coda_cli::client::{self, ToolCaller};
+use coda_cli::commands;
+use coda_cli::error;
+use coda_cli::fuzzy;
+use coda_cli::output::{self, OutputFormat};
+use coda_cli::polish;
+use coda_cli::schema_cache;
+use coda_cli::slug;
+use coda_cli::trace;
+use coda_cli::validate;
 
 const BANNER: &str = r#"
   ____  _   _ ____  _____ ____  _   _ _   _ __  __    _    _   _

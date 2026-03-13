@@ -11,6 +11,10 @@ authors = ["Coda"]
 keywords = ["cli", "coda", "docs", "ai-agent", "automation"]
 categories = ["command-line-utilities", "web-programming"]
 
+[lib]
+name = "coda_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "shd"
 path = "src/main.rs"

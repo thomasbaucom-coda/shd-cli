@@ -1,0 +1,7 @@
+{
+  "name": "Test User",
+  "loginId": "test@example.com",
+  "scpiTokenInfo": {
+    "tokenName": "test-token"
+  }
+}
