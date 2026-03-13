@@ -1,4 +1,4 @@
-use crate::client::CodaClient;
+use crate::client::{CodaClient, ToolCaller};
 use crate::error::Result;
 use crate::output;
 use crate::schema_cache;
@@ -304,9 +304,13 @@ fn infer_semantic_type(desc: &str) -> Option<String> {
 
     // ID patterns: "Column IDs", "Row ID", "element ID", etc.
     // Match " ID" or " IDs" as whole words (preceded by space or start of string)
-    if lower.contains(" id ") || lower.contains(" ids ") || lower.contains(" id(")
-        || lower.ends_with(" id") || lower.ends_with(" ids")
-        || lower.starts_with("id ") || lower.starts_with("ids ")
+    if lower.contains(" id ")
+        || lower.contains(" ids ")
+        || lower.contains(" id(")
+        || lower.ends_with(" id")
+        || lower.ends_with(" ids")
+        || lower.starts_with("id ")
+        || lower.starts_with("ids ")
     {
         return Some("id".into());
     }

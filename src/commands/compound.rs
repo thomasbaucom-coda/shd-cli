@@ -3,7 +3,7 @@
 //! These synthetic tools compose multiple Coda API calls into single
 //! CLI invocations, reducing agent call count and chaining overhead.
 
-use crate::client::CodaClient;
+use crate::client::{CodaClient, ToolCaller};
 use crate::error::{CodaError, Result};
 use crate::output::{self, OutputFormat};
 use crate::trace;

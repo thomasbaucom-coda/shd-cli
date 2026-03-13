@@ -198,7 +198,10 @@ mod tests {
             ]
         });
         let paths = collect_polish_paths("content_modify", &payload);
-        assert_eq!(paths, vec!["/operations/0/content", "/operations/2/content"]);
+        assert_eq!(
+            paths,
+            vec!["/operations/0/content", "/operations/2/content"]
+        );
     }
 
     #[test]

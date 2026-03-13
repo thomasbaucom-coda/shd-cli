@@ -13,6 +13,7 @@ mod trace;
 mod validate;
 
 use clap::{Parser, Subcommand};
+use client::ToolCaller;
 use output::OutputFormat;
 
 const BANNER: &str = r#"
@@ -32,7 +33,7 @@ fn print_welcome() {
     let v = env!("CARGO_PKG_VERSION");
     let w = 45; // inner width between │ markers
     let title = format!("      ●      Superhuman Docs CLI  v{v}");
-    let sub   = "     ╱ ╲     agent-first interface for Coda";
+    let sub = "     ╱ ╲     agent-first interface for Coda";
     let arrow = "    ╱   ╲";
     let blank = "";
     eprint!(

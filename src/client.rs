@@ -1,6 +1,13 @@
 use crate::error::{CodaError, Result};
+use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde_json::Value;
+
+#[async_trait]
+pub trait ToolCaller: Send + Sync {
+    async fn call_tool(&self, tool_name: &str, payload: Value) -> Result<Value>;
+    async fn fetch_tools(&self) -> Result<Vec<Value>>;
+}
 
 const TOOL_API_BASE: &str = "https://coda.io/apis/mcp/vbeta";
 const CLI_USER_AGENT: &str = concat!("coda-cli/", env!("CARGO_PKG_VERSION"));
@@ -49,7 +56,7 @@ impl CodaClient {
 
     /// Call a Coda tool via the direct tool endpoint.
     /// POST /apis/mcp/vbeta/tool (docless) or /apis/mcp/vbeta/docs/{docId}/tool
-    pub async fn call_tool(&self, tool_name: &str, payload: Value) -> Result<Value> {
+    pub(crate) async fn call_tool_impl(&self, tool_name: &str, payload: Value) -> Result<Value> {
         let url = self.build_tool_url(&payload)?;
 
         let body = serde_json::json!({
@@ -153,7 +160,7 @@ impl CodaClient {
 
     /// Fetch all available tools from the MCP endpoint via tools/list.
     /// Calls the Streamable HTTP MCP endpoint and parses the SSE response.
-    pub async fn fetch_tools(&self) -> Result<Vec<Value>> {
+    pub(crate) async fn fetch_tools_impl(&self) -> Result<Vec<Value>> {
         let url = self.tool_base_url.clone();
         let body = serde_json::json!({
             "jsonrpc": "2.0",
@@ -363,6 +370,17 @@ impl CodaClient {
             });
 
         CodaError::Api { status, message }
+    }
+}
+
+#[async_trait]
+impl ToolCaller for CodaClient {
+    async fn call_tool(&self, tool_name: &str, payload: Value) -> Result<Value> {
+        self.call_tool_impl(tool_name, payload).await
+    }
+
+    async fn fetch_tools(&self) -> Result<Vec<Value>> {
+        self.fetch_tools_impl().await
     }
 }
 

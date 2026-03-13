@@ -1,4 +1,4 @@
-use crate::client::CodaClient;
+use crate::client::{CodaClient, ToolCaller};
 use crate::error::{CodaError, Result};
 use crate::output;
 use crate::schema_cache;

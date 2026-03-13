@@ -1,5 +1,5 @@
 use crate::auth;
-use crate::client::CodaClient;
+use crate::client::{CodaClient, ToolCaller};
 use crate::error::Result;
 
 const TOKEN_URL: &str = "https://coda.io/account#apiSettings";

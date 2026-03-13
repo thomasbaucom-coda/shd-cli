@@ -1,4 +1,4 @@
-use crate::client::CodaClient;
+use crate::client::{CodaClient, ToolCaller};
 use crate::error::Result;
 use crate::output::{self, OutputFormat};
 use crate::trace;
