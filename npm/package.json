@@ -1,6 +1,6 @@
 {
   "name": "@thomasbaucom-coda/shd",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Coda CLI — agent-first command-line interface for Coda docs",
   "license": "MIT",
   "repository": {
