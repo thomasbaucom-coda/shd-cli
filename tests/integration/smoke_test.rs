@@ -1,9 +1,10 @@
+use coda_cli::auth;
 use coda_cli::client::{CodaClient, ToolCaller};
 use serde_json::json;
 
 fn get_client() -> CodaClient {
-    let token =
-        std::env::var("CODA_API_TOKEN").expect("CODA_API_TOKEN must be set for integration tests");
+    let token = auth::resolve_token(None)
+        .expect("No API token found. Set CODA_API_TOKEN or run `shd auth login`.");
     CodaClient::new(token).unwrap()
 }
 
