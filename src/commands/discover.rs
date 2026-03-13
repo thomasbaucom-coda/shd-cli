@@ -91,7 +91,10 @@ pub async fn discover_one(
     refresh: bool,
     compact: bool,
 ) -> Result<()> {
-    let tools = fetch_tools(client, refresh).await?;
+    let mut tools = fetch_tools(client, refresh).await?;
+
+    // Append synthetic compound tools (same as discover_all)
+    tools.extend(super::compound::synthetic_tool_schemas());
 
     let tool = tools
         .iter()
@@ -159,8 +162,9 @@ fn print_compact_schema(tool: &serde_json::Value) {
                         .get("description")
                         .and_then(|d| d.as_str())
                         .unwrap_or("");
-                    let desc_short = if field_desc.len() > 60 {
-                        format!("{}...", &field_desc[..57])
+                    let desc_short = if field_desc.chars().count() > 60 {
+                        let truncated: String = field_desc.chars().take(57).collect();
+                        format!("{truncated}...")
                     } else {
                         field_desc.to_string()
                     };
@@ -218,7 +222,13 @@ fn print_compact_schema(tool: &serde_json::Value) {
 }
 
 /// Summarize a JSON Schema property into a short type string.
+/// Surfaces semantic hints (e.g. "ID") from the description when the
+/// structural type alone would be ambiguous (e.g. `[string]` vs `[id]`).
 fn compact_type(prop: &serde_json::Value) -> String {
+    let semantic_hint = prop
+        .get("description")
+        .and_then(|d| d.as_str())
+        .and_then(|d| infer_semantic_type(d));
     // Handle anyOf / oneOf (union types)
     if let Some(any_of) = prop.get("anyOf").or_else(|| prop.get("oneOf")) {
         if let Some(variants) = any_of.as_array() {
@@ -252,6 +262,12 @@ fn compact_type(prop: &serde_json::Value) -> String {
                 .get("items")
                 .map(compact_type)
                 .unwrap_or_else(|| "any".into());
+            // Surface semantic hint on array items when items are plain "string"
+            if items_type == "string" {
+                if let Some(hint) = &semantic_hint {
+                    return format!("[{hint}]");
+                }
+            }
             format!("[{items_type}]")
         }
         Some("object") => {
@@ -263,7 +279,37 @@ fn compact_type(prop: &serde_json::Value) -> String {
                 "object".into()
             }
         }
+        Some("string") => {
+            // Surface semantic hint for plain strings (e.g. "uri", "id")
+            if let Some(hint) = &semantic_hint {
+                hint.clone()
+            } else {
+                "string".into()
+            }
+        }
         Some(t) => t.to_string(),
         None => "any".into(),
     }
+}
+
+/// Infer a more descriptive type label from a field's description.
+/// Returns None if no strong semantic signal is found.
+fn infer_semantic_type(desc: &str) -> Option<String> {
+    let lower = desc.to_lowercase();
+
+    // URI / URL patterns
+    if lower.contains("uri") || lower.starts_with("url") {
+        return Some("uri".into());
+    }
+
+    // ID patterns: "Column IDs", "Row ID", "element ID", etc.
+    // Match " ID" or " IDs" as whole words (preceded by space or start of string)
+    if lower.contains(" id ") || lower.contains(" ids ") || lower.contains(" id(")
+        || lower.ends_with(" id") || lower.ends_with(" ids")
+        || lower.starts_with("id ") || lower.starts_with("ids ")
+    {
+        return Some("id".into());
+    }
+
+    None
 }
