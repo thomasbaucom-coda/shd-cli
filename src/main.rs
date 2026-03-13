@@ -421,9 +421,16 @@ async fn dispatch_tool(
 
     // Polish text fields before sending to Coda
     if polish {
-        let count = polish::polish_payload(&resolved_name, &mut payload).await?;
-        if count > 0 {
-            output::info(&format!("[polish] Polished {count} text field(s).\n"));
+        match polish::polish_payload(&resolved_name, &mut payload).await {
+            Ok(count) if count > 0 => {
+                output::info(&format!("[polish] Polished {count} text field(s).\n"));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                output::info(&format!(
+                    "[polish] Skipped: {e}. Proceeding with original text.\n"
+                ));
+            }
         }
     }
 
